@@ -85,7 +85,7 @@ let rec diff_term evm1 evm2 t1 t2 =
 let diff_proof p1 p2 = List.concat @@ CList.map2 diff_term (Proof.partial_proof p1) (Proof.partial_proof p2)
 (* let diff_proof evm p1 p2 = diff_term (return p1) (return p2) (partial_proof p1) (partial_proof p2) *)
 
-let find_vars c = print_int (List.length c);
+let find_vars c =
   let collect a c = match Constr.kind c with
     | Rel _ -> str "Rel"::a
     | Const (c,_) -> Names.Label.print (Names.Constant.label c)::a
@@ -151,7 +151,7 @@ let pr_dproof ps =
         if List.tl g1 = g2 then pr_simple ~first:true p1 p2 v ++ pr_step (n+1) m else
         if List.tl g1 = List.tl g2 then pr_simple p1 p2 v ++ pr_step (n+1) m
         else warn "unsupported" v
-      | Warn s -> s
+      | Warn s -> s ++ fnl () ++ pr_step (n+1) m
   in Feedback.msg_info (fnl () ++ pr_step 1 (Array.length ps))
 
 let replay tokens =

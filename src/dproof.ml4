@@ -184,4 +184,5 @@ VERNAC COMMAND EXTEND DProof CLASSIFIED AS QUERY
   | [ "DAbort"] -> [ stop (); reset () ]
   | [ "DEnd" ] -> [ stop (); start (); reset () ]
   | [ "DQed" ] -> [ stop (); start (); reset (); Vernacentries.interp (Loc.dummy_loc, VernacEndProof (Proved (Opaque None,None)))]
+  | [ "PR" ] -> [ Feedback.msg_info (Printer.pr_open_subgoals ()) ]
 END

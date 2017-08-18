@@ -1,5 +1,6 @@
 open Pp
 open Constr
+open Names
 
 let resize_buffer ibuf = let open Bytes in
   let nstr = create (2 * length ibuf.Coqloop.str + 1) in
@@ -12,17 +13,17 @@ let prompt_char ic ibuf count =
   Coqloop.(let bol = match ibuf.bols with
       | ll::_ -> Int.equal ibuf.len ll
       | [] -> Int.equal ibuf.len 0
-     in
-     if bol && not !Flags.print_emacs then top_stderr (str (ibuf.prompt()));
-     try
-       let c = input_char ic in
-       if c == '\n' then ibuf.bols <- (ibuf.len+1) :: ibuf.bols;
-       if ibuf.len == String.length ibuf.str then resize_buffer ibuf;
-       ibuf.str.[ibuf.len] <- c;
-       ibuf.len <- ibuf.len + 1;
-       Some c
-     with End_of_file ->
-       None)
+    in
+    if bol && not !Flags.print_emacs then top_stderr (str (ibuf.prompt()));
+    try
+      let c = input_char ic in
+      if c == '\n' then ibuf.bols <- (ibuf.len+1) :: ibuf.bols;
+      if ibuf.len == String.length ibuf.str then resize_buffer ibuf;
+      ibuf.str.[ibuf.len] <- c;
+      ibuf.len <- ibuf.len + 1;
+      Some c
+    with End_of_file ->
+      None)
 
 let vernaclog = ref []
 let reset () = vernaclog := []
@@ -48,28 +49,28 @@ let get_tokens () =
 let stop () = Coqloop.top_buffer.tokens <- Pcoq.Gram.parsable (Stream.from (prompt_char stdin Coqloop.top_buffer))
 
 let rec rel2var vs t =
-    match Obj.magic t with
-    |Rel i              -> begin match (List.nth vs (i-1)) with
-        |Names.Name v    -> mkVar v
-        |Names.Anonymous -> failwith "Anonymous : not supported"
-      end
-    |Var v              -> mkVar v
-    |Meta v             -> mkMeta v
-    |Evar (k,a)         -> mkEvar(k,(Array.map (rel2var vs) a))
-    |Sort v             -> mkSort v
-    |Cast (v,ck,tp)     -> mkCast(rel2var vs v,ck,rel2var vs tp)
-    |Prod (v,t1,t2)     -> mkProd(v,rel2var vs t1, rel2var (v::vs) t2 )
-    |Lambda (v,t1,t2)   -> mkLambda(v,rel2var (v::vs) t1, rel2var (v::vs) t2)
-    |LetIn (v,t1,tp,t2) -> mkLetIn(v,rel2var vs t1,rel2var vs tp, rel2var (v::vs) t2 )
-    |App (c,ca)         -> mkApp(rel2var ((Name (Obj.magic "dummy"))::vs) c,Array.map (rel2var ((Name (Obj.magic "dummy"))::vs)) ca)
-    (*リストの長さを調整するためにダミーをひとつ追加しておく*)
-    |Const pc           -> t
-    |Ind pi             -> t
-    |Construct pc       -> t
-    |Case (ci,t1,t2,ca) -> mkCase(ci,rel2var vs t1,rel2var vs t2,Array.map (rel2var vs ) ca)
-    |Fix (a,(n,tp,t1))  -> failwith "fix:not supported"
-    |CoFix (a,(n,tp,t1))-> failwith "cofix:not supported"
-    |Proj (p,v)         -> mkProj(p,rel2var vs t)
+  match Obj.magic t with
+  |Rel i              -> begin match (List.nth vs (i-1)) with
+      |Name v    -> mkVar v
+      |Anonymous -> failwith "Anonymous : not supported"
+    end
+  |Var v              -> mkVar v
+  |Meta v             -> mkMeta v
+  |Evar (k,a)         -> mkEvar(k,(Array.map (rel2var vs) a))
+  |Sort v             -> mkSort v
+  |Cast (v,ck,tp)     -> mkCast(rel2var vs v,ck,rel2var vs tp)
+  |Prod (v,t1,t2)     -> mkProd(v,rel2var vs t1, rel2var (v::vs) t2 )
+  |Lambda (v,t1,t2)   -> mkLambda(v,rel2var (v::vs) t1, rel2var (v::vs) t2)
+  |LetIn (v,t1,tp,t2) -> mkLetIn(v,rel2var vs t1,rel2var vs tp, rel2var (v::vs) t2 )
+  |App (c,ca)         -> mkApp(rel2var ((Name (Obj.magic "dummy"))::vs) c,Array.map (rel2var ((Name (Obj.magic "dummy"))::vs)) ca)
+  (*リストの長さを調整するためにダミーをひとつ追加しておく*)
+  |Const pc           -> t
+  |Ind pi             -> t
+  |Construct pc       -> t
+  |Case (ci,t1,t2,ca) -> mkCase(ci,rel2var vs t1,rel2var vs t2,Array.map (rel2var vs ) ca)
+  |Fix (a,(n,tp,t1))  -> failwith "fix:not supported"
+  |CoFix (a,(n,tp,t1))-> failwith "cofix:not supported"
+  |Proj (p,v)         -> mkProj(p,rel2var vs t)
 
 let rec diff_term t1 t2 =
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
@@ -94,7 +95,7 @@ let diff_proof p1 p2 = List.concat @@ CList.map2 diff_term (Proof.partial_proof 
 let find_vars c =
   let collect a c = match kind c with
     | Rel _ -> str "Rel"::a (* todo *)
-    | Const (c,_) -> Names.Label.print (Names.Constant.label c)::a
+    | Const (c,_) -> Label.print (Constant.label c)::a
     | _ -> str "else"::a (* todo *)
   in
   let a = List.concat @@ List.map (fun (_,x) -> (List.hd (collect [] x)) :: fold collect [] x) c in
@@ -106,25 +107,34 @@ type prftree = End | Path of p_or_w * prftree | Branch of p_or_w * prftree list 
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
 
 let rename avoid id =
-  let rec f id = if Names.Id.Set.mem id avoid then f (Nameops.lift_subscript id) else id in
+  let rec f id = if Id.Set.mem id avoid then f (Nameops.lift_subscript id) else id in
   let ret = f id in
-  ret, Names.Id.Set.add ret avoid
+  ret, Id.Set.add ret avoid
 
-let collect_id t = Names.(
-    let f s t = match kind t with
-      | Var i | Prod (Name i,_,_) | Lambda (Name i,_,_) | LetIn (Name i,_,_,_) -> Id.Set.add i s
-      | Const (c,_) -> Id.Set.add (Label.to_id (Constant.label c)) s
-      | Ind ((i,_),_) | Construct (((i,_),_),_) -> Id.Set.add (Label.to_id (MutInd.label i)) s
-      | Fix (_,(ns,_,_)) | CoFix (_,(ns,_,_)) -> Array.fold_left (fun s n -> match n with Anonymous->s | Name i -> Id.Set.add i s) s ns
-      | _ -> s
-    in
-    f (fold f Id.Set.empty t)) t
+let collect_id t =
+  let rec f s t = match kind t with
+    | Var i -> Id.Set.add i s
+    | Prod (Name i,_,_) | Lambda (Name i,_,_) | LetIn (Name i,_,_,_) -> Id.Set.add i (fold f s t)
+    | Const (c,_) -> Id.Set.add (Label.to_id (Constant.label c)) s
+    | Ind ((i,_),_) | Construct (((i,_),_),_) -> Id.Set.add (Label.to_id (MutInd.label i)) s
+    | Fix (_,(ns,_,_)) | CoFix (_,(ns,_,_)) -> Array.fold_left (fun s n -> match n with Anonymous->s | Name i -> Id.Set.add i s) (fold f s t) ns
+    | _ -> fold f s t
+  in
+  f Id.Set.empty t
+
+let env = ref []
 
 let prftree s =
   let s = Stream.of_list s in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
   let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
   let focus _ _ = false in (* TODO *)
+  let rec setenv = function
+    | Proof (_,_,p)::l -> env := Id.Set.elements (List.fold_left (fun s c -> Id.Set.union (collect_id c) s) (Id.Set.of_list !env) (Proof.partial_proof p))
+    | _::l -> setenv l
+    | _ -> ()
+  in
+  setenv (List.rev (Stream.npeek (1000) s));
 
   let rec f () = try
       (match Stream.next s with
@@ -190,7 +200,7 @@ let pr_simple ?(first=false) p1 p2 v =
   let (g,_,_,_,e) = Proof.proof p1 in
   let diff = diff_proof p1 p2 in
   let tac = if first then "have" else "then" in
-  str tac ++ spc () ++ pr_concl 0 (g,e) ++ spc () ++
+  str tac ++ spc () ++ str "(" ++ pr_concl 0 (g,e) ++ str ")" ++ spc () ++
   find_vars diff ++
   str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
 (*  ++ str "(**" ++ Pp.prlist_with_sep pr_semicolon (fun x -> Printer.pr_constr (snd x)) diff ++ str "*)" ++ fnl () *)
@@ -209,7 +219,15 @@ let rec pr_tree s = function
   | _ -> s ++ str "(* todo *)"
 
 and pr_branch p l =
-  let pr b = str "claim H:P." ++ fnl () ++ pr_tree (mt ()) b ++ str "end claim." ++ fnl () in
+  let getp = function
+    | Path (Proof (p,_,_), _) | Branch ((Proof (p,_,_)), _) -> let (g,_,_,_,e) = Proof.proof p in pr_concl 0 (g,e)
+    | _ -> str "???"
+  in
+  let pr b =
+    let id = Namegen.next_ident_away_in_goal (Id.of_string "H") !env in
+    env := id::!env;
+    str "claim " ++ Id.print id ++ str":" ++ getp b ++ str "." ++ fnl () ++ pr_tree (mt ()) b ++ str "end claim." ++ fnl ()
+  in
   let join = match p with
     | Proof (p1,v,p2) ->
       let (g,_,_,_,e) = Proof.proof p1 in
@@ -219,7 +237,8 @@ and pr_branch p l =
       str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
     | Warn s -> s
   in
-  List.fold_left (fun t b -> pr b ++ t) (mt ()) l ++ fnl () ++ join ++ fnl () ++ str "hence thesis." ++ fnl ()
+  List.fold_left (fun t b -> pr b ++ t) (mt ()) l ++
+  fnl () ++ join ++ fnl () ++ str "hence thesis." ++ fnl ()
 
 let pr_tree t = str "proof." ++ fnl () ++ pr_tree (mt ()) t ++ str "end proof."
 

@@ -9,8 +9,8 @@ let resize_buffer ibuf = let open Bytes in
 
 let top_stderr x = msg_with ~pp_tag:Ppstyle.pp_tag !Pp_control.err_ft x
 
-let prompt_char ic ibuf count =
-  Coqloop.(let bol = match ibuf.bols with
+let prompt_char ic ibuf count = Coqloop.(
+    let bol = match ibuf.bols with
       | ll::_ -> Int.equal ibuf.len ll
       | [] -> Int.equal ibuf.len 0
     in
@@ -22,8 +22,7 @@ let prompt_char ic ibuf count =
       ibuf.str.[ibuf.len] <- c;
       ibuf.len <- ibuf.len + 1;
       Some c
-    with End_of_file ->
-      None)
+    with End_of_file -> None)
 
 let vernaclog = ref []
 let reset () = vernaclog := []
@@ -48,47 +47,23 @@ let get_tokens () =
 
 let stop () = Coqloop.top_buffer.tokens <- Pcoq.Gram.parsable (Stream.from (prompt_char stdin Coqloop.top_buffer))
 
-let rec rel2var vs t =
-  match Obj.magic t with
-  |Rel i              -> begin match (List.nth vs (i-1)) with
-      |Name v    -> mkVar v
-      |Anonymous -> failwith "Anonymous : not supported"
-    end
-  |Var v              -> mkVar v
-  |Meta v             -> mkMeta v
-  |Evar (k,a)         -> mkEvar(k,(Array.map (rel2var vs) a))
-  |Sort v             -> mkSort v
-  |Cast (v,ck,tp)     -> mkCast(rel2var vs v,ck,rel2var vs tp)
-  |Prod (v,t1,t2)     -> mkProd(v,rel2var vs t1, rel2var (v::vs) t2 )
-  |Lambda (v,t1,t2)   -> mkLambda(v,rel2var (v::vs) t1, rel2var (v::vs) t2)
-  |LetIn (v,t1,tp,t2) -> mkLetIn(v,rel2var vs t1,rel2var vs tp, rel2var (v::vs) t2 )
-  |App (c,ca)         -> mkApp(rel2var ((Name (Obj.magic "dummy"))::vs) c,Array.map (rel2var ((Name (Obj.magic "dummy"))::vs)) ca)
-  (*リストの長さを調整するためにダミーをひとつ追加しておく*)
-  |Const pc           -> t
-  |Ind pi             -> t
-  |Construct pc       -> t
-  |Case (ci,t1,t2,ca) -> mkCase(ci,rel2var vs t1,rel2var vs t2,Array.map (rel2var vs ) ca)
-  |Fix (a,(n,tp,t1))  -> failwith "fix:not supported"
-  |CoFix (a,(n,tp,t1))-> failwith "cofix:not supported"
-  |Proj (p,v)         -> mkProj(p,rel2var vs t)
-
-let rec diff_term t1 t2 =
-  let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
+let rec diff_term env t1 t2 =
+  let f_array env l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 (diff_term env) l1 l2 in
   if equal t1 t2 then [] else
     match kind t1, kind t2 with
-    | Evar (e1,l1), Evar (e2,l2) when e1=e2 -> f_array l1 l2
-    | Evar _, _ -> [ (t1,t2) ]
-    | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term c1 c2 @ diff_term t1 t2
-    | Prod (_,t1,b1), Prod (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
-    | Lambda (_,t1,b1), Lambda (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
-    | LetIn (_,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term t1 t2 @ diff_term b1 b2
-    | App (b1,l1), App (b2,l2) -> diff_term b1 b2 @ f_array l1 l2
-    | Proj (_,t1), Proj (_,t2) -> diff_term t1 t2
-    | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term p1 p2 @ diff_term b1 b2 @ f_array bl1 bl2
-    | Fix (_,(_,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array tl1 tl2 @ f_array bl1 bl2
-    | CoFix (_,(_,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array tl1 tl2 @ f_array bl1 bl2
+    | Evar (e1,l1), Evar (e2,l2) when e1=e2 -> f_array env l1 l2
+    | Evar _, _ -> [ (t1,t2,env) ]
+    | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term env c1 c2 @ diff_term env t1 t2
+    | Prod (n,t1,b1), Prod (_,t2,b2) -> diff_term env t1 t2 @ diff_term (n::env) b1 b2
+    | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (n::env) b1 b2
+    | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (n::env) k1 k2
+    | App (b1,l1), App (b2,l2) -> diff_term env b1 b2 @ f_array env l1 l2
+    | Proj (_,t1), Proj (_,t2) -> diff_term env t1 t2
+    | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term env p1 p2 @ diff_term env b1 b2 @ f_array env bl1 bl2 (* todo Detyping.detype_caseあたりを参照 *)
+    | Fix (_,(_,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array env tl1 tl2 @ f_array env bl1 bl2 (* todo *)
+    | CoFix (_,(_,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array env tl1 tl2 @ f_array env bl1 bl2
     | _ -> failwith ""
-let diff_term t1 t2 = diff_term (rel2var [] t1) (rel2var [] t2)
+let diff_term t1 t2 = diff_term [] t1 t2
 
 let diff_proof p1 p2 = List.concat @@ CList.map2 diff_term (Proof.partial_proof p1) (Proof.partial_proof p2)
 
@@ -98,7 +73,7 @@ let find_vars c =
     | Const (c,_) -> Label.print (Constant.label c)::a
     | _ -> str "else"::a (* todo *)
   in
-  let a = List.concat @@ List.map (fun (_,x) -> (List.hd (collect [] x)) :: fold collect [] x) c in
+  let a = List.concat @@ List.map (fun (_,x,_) -> (List.hd (collect [] x)) :: fold collect [] x) c in
   (*if a = [] then mt () else str "by " ++ prlist_with_sep pr_comma (fun x -> x) a ++ spc ()*)
   str "by * "
 
@@ -136,8 +111,8 @@ let prftree s =
   in
   setenv (List.rev (Stream.npeek (1000) s));
 
-  let rec f () = try
-      (match Stream.next s with
+  let rec f () = try(
+    match Stream.next s with
       | Proof (p1,v,p2) ->
         let warntree m = Path (Warn (warn m v), f ()) in
         let (g1,b1,_,_,_) = Proof.proof p1 in

@@ -178,38 +178,38 @@ let ___ = str ""
 let prtrm _ = str ""
 let pr_term top p1 v p2 rest =
   let (evar,diff,_) = List.hd (diff_proof p1 p2) in
-  let (goal,_,_,_,evmap) = Proof.proof p1 in
-  let env = Goal.V82.env evmap (List.hd goal) in
-  let typ = match kind evar with Evar e -> Evd.existential_type evmap e in
-  let prtyp env = pr_constr env evmap in
-  let rec pr_term ?(name=None) top env typ term names = match kind term with
+  let (g,_,_,_,e) = Proof.proof p1 in
+  let env = Goal.V82.env e (List.hd g) in
+  let evmap = let (_,_,_,_,e) = Proof.proof p2 in ref e in
+  let rec pr_term ?(name=None) top env term names =
+    let prtyp () = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
+    match kind term with
     | LetIn (n,b,t,c) ->
-      str "claim " ++ pr_name n ++ str ":" ++ prtyp env typ ++ str "." ++ fnl () ++
-      pr_term true env t b names ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
-      pr_term false (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) typ term names ++ fnl ()
+      str "claim " ++ pr_name n ++ str ":" ++ prtyp () ++ str "." ++ fnl () ++
+      pr_term true env b names ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
+      pr_term false (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) term names ++ fnl ()
     | Lambda (n,t,c) ->
       let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in
-      let body = str "let " ++ name ++ match kind typ with
-        | Prod (_,t1,t2) ->
-          str ":" ++ prtyp env t ++ str "." ++ fnl () ++ pr_term true (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) t2 c names
-        | _ -> str "(* let error *)" ++ fnl () ++ str "." ++ fnl ()
+      let body =
+        str "let " ++ name ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
+        pr_term true (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) c names
       in
       if top then body else
-        str "claim " ++ prtyp env typ ++ str "." ++ fnl () ++
+        str "claim " ++ prtyp () ++ str "." ++ fnl () ++
         body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
-    | Evar _ -> str "claim " ++ prtyp env typ ++ str "." ++ fnl () ++ rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+    | Evar _ -> str "claim " ++ prtyp () ++ str "." ++ fnl () ++ rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
     | App (f,a) ->
-      let fs = pr_term top env typ f names in
+      let fs = pr_term top env f names in
       let pr_branch (a,n) t =
         let name = new_name None in
-        a ++ pr_term ~name:(Some name) top env typ t names ++ fnl (), name::n
+        a ++ pr_term ~name:(Some name) top env t names ++ fnl (), name::n
       in
       let (args,names) = Array.fold_left pr_branch (mt (), []) a in
-      fs ++ args ++ str "have " ++ prtyp env typ ++ str " by *." ++ fnl ()
-    | Rel _ | Var _ | Const _ | Construct _  -> str "have " ++ prtyp env typ ++ str "." ++ fnl ()
-    | Cast (c,_,t) -> pr_term top env t c names
+      fs ++ args ++ str "have " ++ prtyp () ++ str " by *." ++ fnl ()
+    | Rel _ | Var _ | Const _ | Construct _  -> str "have " ++ prtyp () ++ str "." ++ fnl ()
+    | Cast (c,_,t) -> pr_term top env c names
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ | Case _ -> str "(* not supported *)"
-  in pr_term top env typ diff []
+  in pr_term top env diff []
 
 let rec pr_tree s = function
   | Path (Proof (p1,v,p2), next) ->
@@ -274,9 +274,9 @@ let start () =
 
 open Constrarg
 
-VERNAC COMMAND EXTEND DProof CLASSIFIED AS QUERY
-  | [ "DProof" ]  -> [ record () ]
-  | [ "DAbort"] -> [ stop (); reset () ]
-  | [ "DEnd" ] -> [ stop (); start (); reset () ]
-  | [ "DQed" ] -> [ stop (); start (); reset (); Vernacentries.interp (Loc.dummy_loc,  VernacEndProof (Proved (Opaque None,None)))]
-END
+    VERNAC COMMAND EXTEND DProof CLASSIFIED AS QUERY
+   | [ "DProof" ]  -> [ record () ]
+   | [ "DAbort"] -> [ stop (); reset () ]
+   | [ "DEnd" ] -> [ stop (); start (); reset () ]
+   | [ "DQed" ] -> [ stop (); start (); reset (); Vernacentries.interp (Loc.dummy_loc,  VernacEndProof (Proved (Opaque None,None)))]
+       END

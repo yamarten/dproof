@@ -174,8 +174,6 @@ let pr_name = function
   | Name n -> Id.print n
   | Anonymous -> str "_"
 
-let ___ = str ""
-let prtrm _ = str ""
 let pr_term top p1 v p2 rest =
   let (evar,diff,_) = List.hd (diff_proof p1 p2) in
   let (g,_,_,_,e) = Proof.proof p1 in
@@ -208,7 +206,31 @@ let pr_term top p1 v p2 rest =
       fs ++ args ++ str "have " ++ prtyp () ++ str " by *." ++ fnl ()
     | Rel _ | Var _ | Const _ | Construct _  -> str "have " ++ prtyp () ++ str "." ++ fnl ()
     | Cast (c,_,t) -> pr_term top env c names
-    | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ | Case _ -> str "(* not supported *)"
+    | Case (ci,t,c,bs) ->
+      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env).mind_packets.(i) in
+      let new_env = ref env in
+      let get_args n c =
+        let rec f n c a =
+          if n=0 then a else
+            match kind c with
+            | Lambda (x,t,c) ->
+              new_env := Environ.push_rel (Context.Rel.Declaration.LocalAssum (x,t)) !new_env;
+              f (n-1) c (x::a)
+            | _ -> a
+        in f n c []
+      in
+      let pr_br n c =
+        let con = Name ind.mind_consnames.(n) in
+        let args = List.rev (get_args ind.mind_consnrealargs.(n) c) in
+        str "suppose it is (" ++
+        prlist_with_sep spc pr_name (con::args) ++
+        str ")." ++ fnl () ++ pr_term true !new_env c names ++ str "hence thesis." ++ fnl ()
+      in
+      str "claim " ++ prtyp () ++ str "." ++ fnl () ++
+      str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
+      prvecti_with_sep fnl pr_br bs ++
+      str "end cases." ++ fnl () ++ str "end claim." ++ fnl ()
+    | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
   in pr_term top env diff []
 
 let rec pr_tree s = function

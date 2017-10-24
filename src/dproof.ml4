@@ -52,22 +52,22 @@ let stop () = Coqloop.top_buffer.tokens <- Pcoq.Gram.parsable (Stream.from (prom
 
 let rec diff_term env t1 t2 =
   let f_array env l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 (diff_term env) l1 l2 in
+  let add e n t = Termops.push_rel_assum (n,t) e in
   if equal t1 t2 then [] else
     match kind t1, kind t2 with
-    | Evar (e1,l1), Evar (e2,l2) when e1=e2 -> f_array env l1 l2
     | Evar _, _ -> [ (t1,t2,env) ]
     | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term env c1 c2 @ diff_term env t1 t2
-    | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (n::env) b1 b2
-    | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (n::env) k1 k2
+    | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (add env n t1) b1 b2
+    | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (add env n t1) k1 k2
     | App (b1,l1), App (b2,l2) -> diff_term env b1 b2 @ f_array env l1 l2
     | Proj (_,t1), Proj (_,t2) -> diff_term env t1 t2
     | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term env p1 p2 @ diff_term env b1 b2 @ f_array env bl1 bl2
     | Fix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) ->
-      let env' = Array.to_list ns @ env in f_array env tl1 tl2 @ f_array env' bl1 bl2
+      let env' = CArray.fold_left2 add env ns tl1 in
+      f_array env tl1 tl2 @ f_array env' bl1 bl2
     | _ -> failwith ""
-let diff_term t1 t2 = diff_term [] t1 t2
 
-let diff_proof p1 p2 = List.concat @@ CList.map2 diff_term (Proof.partial_proof p1) (Proof.partial_proof p2)
+let diff_proof ?(env=Global.env ()) p1 p2 = List.concat @@ CList.map2 (diff_term env) (Proof.partial_proof p1) (Proof.partial_proof p2)
 
 let find_vars c =
   let collect a c = match kind c with
@@ -174,30 +174,36 @@ let pr_name = function
   | Name n -> Id.print n
   | Anonymous -> str "_"
 
+let named_to_rel = Context.(function
+    | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
+    | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
+
 let pr_term top p1 p2 rest =
   if diff_proof p1 p2 = [] then str "thus thesis." ++ rest else
-    let (evar,diff,_) = List.hd (diff_proof p1 p2) in
     let (g,_,_,_,e) = Proof.proof p1 in
     let env = Goal.V82.env e (List.hd g) in
+    let (evar,diff,env) = List.hd (diff_proof ~env p1 p2) in
     let evmap = let (_,_,_,_,e) = Proof.proof p2 in ref e in
     let rec pr_term ?(name=None) top env term names =
-      let prtyp () = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
+      let typ = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
       match kind term with
       | LetIn (n,b,t,c) ->
-        str "claim " ++ pr_name n ++ str ":" ++ prtyp () ++ str "." ++ fnl () ++
-        pr_term true env b names ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
-        pr_term false (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) term names ++ fnl ()
+        let def = pr_term true env b names in
+        let body = pr_term false (Termops.push_rel_assum (n,t) env) term names in
+        str "claim " ++ pr_name n ++ str ":" ++ typ ++ str "." ++ fnl () ++
+        def ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
+        body ++ fnl ()
       | Lambda (n,t,c) ->
         let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in
         let body =
           str "let " ++ name ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
-          pr_term true (Environ.push_rel (Context.Rel.Declaration.LocalAssum (n,t)) env) c names
+          pr_term true (Termops.push_rel_assum (n,t) env) c names
         in
         if top then body else
-          str "claim " ++ prtyp () ++ str "." ++ fnl () ++
+          str "claim " ++ typ ++ str "." ++ fnl () ++
           body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
       | Evar _ ->
-        str "claim " ++ prtyp () ++ str "." ++ fnl () ++
+        str "claim " ++ typ ++ str "." ++ fnl () ++
         rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
       | App (f,a) ->
         let fs = pr_term top env f names in
@@ -206,7 +212,7 @@ let pr_term top p1 p2 rest =
           a ++ pr_term ~name:(Some name) top env t names, name::n
         in
         let (args,names) = Array.fold_left pr_branch (mt (), []) a in
-        fs ++ args ++ str "have " ++ prtyp () ++ str " by *." ++ fnl ()
+        fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
       | Cast (c,_,t) -> pr_term top env c names
       | Case (ci,t,c,bs) ->
         let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env).mind_packets.(i) in
@@ -215,7 +221,7 @@ let pr_term top p1 p2 rest =
             if n=0 then a,e,c else
               match kind c with
               | Lambda (x,t,c) ->
-                let newe = Environ.push_rel (Context.Rel.Declaration.LocalAssum (x,t)) e in
+                let newe = Termops.push_rel_assum (x,t) e in
                 f (n-1) c (x::a) newe
               | _ -> a,e,c
           in f n c [] env
@@ -229,7 +235,7 @@ let pr_term top p1 p2 rest =
           prlist_with_sep spc pr_name (con::args) ++
           str ")." ++ fnl () ++ body ++ str "hence thesis." ++ fnl ()
         in
-        str "claim " ++ prtyp () ++ str "." ++ fnl () ++
+        str "claim " ++ typ ++ str "." ++ fnl () ++
         str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
         prvecti_with_sep mt pr_br bs ++
         str "end cases." ++ fnl () ++ str "end claim." ++ fnl ()
@@ -258,7 +264,7 @@ and pr_branch p l =
   let pr b =
     let id = Namegen.next_ident_away_in_goal (Id.of_string "H") !env in
     env := id::!env;
-    str "claim " ++ Id.print id ++ str":" ++ getp b ++ str "." ++ fnl () ++ pr_tree (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+    str "claim " ++ Id.print id ++ str":(" ++ getp b ++ str ")." ++ fnl () ++ pr_tree (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
   in
   let join = match p with
     | Proof (p1,v,p2) ->

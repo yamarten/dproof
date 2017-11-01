@@ -2,7 +2,7 @@ open Pp
 open Constr
 open Names
 
-let pr_constr env evar_map constr =
+let pr_constr (env,_,_) evar_map constr =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env evar_map constr)
 
 let resize_buffer ibuf = let open Bytes in
@@ -145,16 +145,9 @@ let prftree s =
     with _ -> End
   in f ()
 
-let pr_concl c (g,e) =
+let pr_concl (g,e) (env,_,_) =
   let (g,e) = Goal.V82.nf_evar e (List.hd g)  in
-  let env = Goal.V82.env e g in
   let concl = Goal.V82.concl e g in
-  let rec remove_intros c e t =
-    if c = 0 then (e,t) else match kind t with
-      | Prod (n,typ,t) -> remove_intros (c-1) (Termops.push_rel_assum (n,typ) e) t
-      | _ -> print_string "(* error: remove *)"; (e,t)
-  in
-  let (env,concl) = remove_intros c env concl in
   Printer.pr_goal_concl_style_env env e concl
 
 (* あまりにもひどいので後でなんとかしよう *)
@@ -176,9 +169,9 @@ let replace_name pat str =
   in
   List.map repall
 
-(* from detyping.ml*)
-let evar_defs env evmap evk cl = Term.(
-  let bound_to_itself_or_letin decl c =
+(* (* from detyping.ml*)
+   let evar_defs env evmap evk cl = Term.(
+   let bound_to_itself_or_letin decl c =
     match decl with
     | Context.Named.Declaration.LocalDef _ -> true
     | Context.Named.Declaration.LocalAssum (id,_) ->
@@ -186,16 +179,16 @@ let evar_defs env evmap evk cl = Term.(
         let rel = Environ.lookup_rel (destRel c) env in
         Context.Rel.Declaration.get_name rel = (Names.Name id)
       with Not_found -> isVarId id c
-  in
-  try
+   in
+   try
     let l = Evd.evar_instance_array bound_to_itself_or_letin (Evd.find evmap evk) cl in
     let fvs,rels = List.fold_left (fun (fvs,rels) (_,c) -> match kind_of_term c with Rel n -> (fvs,Int.Set.add n rels) | Var id -> (Id.Set.add id fvs,rels) | _ -> (fvs,rels)) (Id.Set.empty,Int.Set.empty) l in
     let l = Evd.evar_instance_array (fun d c ->(bound_to_itself_or_letin d c && not (isRel c && Int.Set.mem (destRel c) rels || isVar c && (Id.Set.mem (destVar c) fvs)))) (Evd.find evmap evk) cl in
     l
-  with Not_found -> CArray.map_to_list (fun c -> (Id.of_string "__",c)) cl)
+   with Not_found -> CArray.map_to_list (fun c -> (Id.of_string "__",c)) cl)
 
-let replace_with_evar env evmap (k,a) = function
-  | Vernacexpr.VernacExtend (n,args) ->
+   let replace_with_evar env evmap (k,a) = function
+   | Vernacexpr.VernacExtend (n,args) ->
     let args_str = List.map (fun a -> Pp.string_of_ppcmds (Pptactic.pr_raw_generic env a)) args in
     let rep = evar_defs env evmap k a in
     let new_args = List.fold_left (fun a (id,c) -> replace_name (Names.Id.to_string id) (string_of_ppcmds (pr_constr env evmap c)) a) args_str rep in
@@ -203,16 +196,17 @@ let replace_with_evar env evmap (k,a) = function
     begin match Pcoq.Gram.entry_parse Pcoq.main_entry (Pcoq.Gram.parsable stream) with
       | Some (_,v) -> v
       | None -> failwith "argument replacement faild" end
-  | _ -> failwith "invalid command"
+   | _ -> failwith "invalid command" *)
 
-let pr_simple ?(first=false) p1 p2 v =
+let pr_simple ?(first=false) env p1 p2 v =
   let (g,_,_,_,e) = Proof.proof p1 in
   let diff = diff_proof p1 p2 in
   let tac = if first then "have" else "then" in
-  str tac ++ spc () ++ str "(" ++ pr_concl 0 (g,e) ++ str ")" ++ spc () ++
+  str tac ++ spc () ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ spc () ++
   find_vars diff ++
   str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
 
+(* Anonymous時の処理について要変更 *)
 let pr_name = function
   | Name n -> Id.print n
   | Anonymous -> str "_"
@@ -221,26 +215,36 @@ let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
   | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
 
-let pr_term top p1 p2 rest =
+let push_rel id typ (env,avoids,map) =
+  (* typがenv中に存在するときの処理をここに書く *)
+  let env = Termops.push_rel_assum (id,typ) env in
+  let avoids = id::avoids in
+  id, (env,avoids,map)
+
+let pr_term env top p1 p2 rest =
   if diff_proof p1 p2 = [] then str "thus thesis." ++ rest else
-  let (g,_,_,_,e) = Proof.proof p1 in
-  let env = Goal.V82.env e (List.hd g) in
-  let (evar,diff,env) = List.hd (diff_proof ~env p1 p2) in
-  let evmap = let (_,_,_,_,e) = Proof.proof p2 in ref e in
-  let rec pr_term ?(name=None) top env term names =
-    let typ = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
+  let (e,_,_) = env in
+  let (evar,diff,_) = List.hd (diff_proof ~env:e p1 p2) in
+  let evmap = let (_,_,_,_,em) = Proof.proof p2 in ref em in
+  let rec pr_term top env term names =
+    let typ =
+      let (e,_,_) = env in
+      let t = Typing.e_type_of e evmap term in
+      pr_constr env !evmap t
+    in
     match kind term with
     | LetIn (n,b,t,c) ->
       let def = pr_term true env b names in
-      let body = pr_term false (Termops.push_rel_assum (n,t) env) c names in
-      str "claim " ++ pr_name n ++ str ":" ++ typ ++ str "." ++ fnl () ++
+      let (id,new_env) = push_rel n t env in
+      let body = pr_term false new_env c names in
+      str "claim " ++ pr_name id ++ str ":" ++ typ ++ str "." ++ fnl () ++
       def ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
       body ++ fnl ()
     | Lambda (n,t,c) ->
-      let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in
+      let (id,new_env) = push_rel n t env in
       let body =
-        str "let " ++ name ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
-        pr_term true (Termops.push_rel_assum (n,t) env) c names
+        str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
+        pr_term true new_env c names
       in
       if top then body else
         str "claim " ++ typ ++ str "." ++ fnl () ++
@@ -252,20 +256,21 @@ let pr_term top p1 p2 rest =
       let fs = pr_term top env f names in
       let pr_branch (a,n) t =
         let name = new_name None in
-        a ++ pr_term ~name:(Some name) top env t names, name::n
+        a ++ pr_term top env t names, name::n
       in
       let (args,names) = Array.fold_left pr_branch (mt (), []) a in
       fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
     | Cast (c,_,t) -> pr_term top env c names
     | Case (ci,t,c,bs) ->
-      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env).mind_packets.(i) in
+      let (e,_,_) = env in
+      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi e).mind_packets.(i) in
       let remove_lam n c =
         let rec f n c a e =
           if n=0 then a,e,c else
           match kind c with
           | Lambda (x,t,c) ->
-            let newe = Termops.push_rel_assum (x,t) e in
-            f (n-1) c (x::a) newe
+            let (newx,newe) = push_rel x t e in
+            f (n-1) c (newx::a) newe
           | _ -> a,e,c
         in f n c [] env
       in
@@ -286,41 +291,44 @@ let pr_term top p1 p2 rest =
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
   in pr_term top env diff []
 
-let rec pr_tree s = function
+let rec pr_tree env s = function
   | Path (Proof (p1,v,p2), next) ->
     let (g1,_,_,_,e1) = Proof.proof p1 in
     let (g2,_,_,_,e2) = Proof.proof p2 in
-    if not (eq_env (g1,e1) (g2,e2)) then pr_term (next=End) p1 p2 (pr_tree (mt ()) next) ++ s else
-    if List.tl g1 = g2 then pr_tree (pr_simple ~first:true p1 p2 v ++ s) next else
-    if List.tl g1 = List.tl g2 then pr_tree (pr_simple p1 p2 v ++ s) next else
+    if not (eq_env (g1,e1) (g2,e2)) then pr_term env (next=End) p1 p2 (pr_tree env (mt ()) next) ++ s else
+    if List.tl g1 = g2 then pr_tree env (pr_simple ~first:true env p1 p2 v ++ s) next else
+    if List.tl g1 = List.tl g2 then pr_tree env (pr_simple env p1 p2 v ++ s) next else
       warn "unsupported" v
-  | Path (Warn m, next) -> m ++ fnl () ++ pr_tree s next
-  | Branch (p,l) -> pr_branch p l ++ s
+  | Path (Warn m, next) -> m ++ fnl () ++ pr_tree env s next
+  | Branch (p,l) -> pr_branch env p l ++ s
   | End -> s
   | _ -> s ++ str "(* todo *)"
 
-and pr_branch p l =
+and pr_branch env p l =
+(* 環境変更とかのやつ *)
   let getp = function
-    | Path (Proof (p,_,_), _) | Branch ((Proof (p,_,_)), _) -> let (g,_,_,_,e) = Proof.proof p in pr_concl 0 (g,e)
+    | Path (Proof (p,_,_), _) | Branch ((Proof (p,_,_)), _) -> let (g,_,_,_,e) = Proof.proof p in pr_concl (g,e) env
     | _ -> str "???"
   in
   let pr b =
-    let id = Namegen.next_ident_away_in_goal (Id.of_string "H") !env in
-    env := id::!env;
-    str "claim " ++ Id.print id ++ str":(" ++ getp b ++ str ")." ++ fnl () ++ pr_tree (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+    let id = new_name None in
+    str "claim " ++ id ++ str":(" ++ getp b ++ str ")." ++ fnl () ++ pr_tree env (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
   in
   let join = match p with
     | Proof (p1,v,p2) ->
       let (g,_,_,_,e) = Proof.proof p1 in
       let diff = diff_proof p1 p2 in
-      str "have" ++ spc () ++ str "(" ++ pr_concl 0 (g,e) ++ str ")" ++ spc () ++
+      str "have" ++ spc () ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ spc () ++
       find_vars diff ++
       str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
     | Warn s -> s
   in
   List.fold_left (fun t b -> pr b ++ t) (mt ()) l ++ join
 
-let pr_tree t = str "proof." ++ fnl () ++ pr_tree (mt ()) t ++ str "hence thesis." ++fnl () ++ str "end proof."
+let init_env () = (Global.env (),[],[])
+
+(* avoidsにfind_varsの結果を突っ込むことが必要 *)
+let pr_tree t = str "proof." ++ fnl () ++ pr_tree (init_env ()) (mt ()) t ++ str "hence thesis." ++fnl () ++ str "end proof."
 
 let replay tokens =
   let play (l,v) = try begin
@@ -353,7 +361,7 @@ let start_term () =
     let p = freeze `No in
     let s = States.freeze `Yes in
     load ();
-    let body = pr_term true (give_me_the_proof ()) (proof_of_state p) (mt ()) in
+    let body = pr_term (init_env ()) true (give_me_the_proof ()) (proof_of_state p) (mt ()) in
     Feedback.msg_notice (str "proof." ++ fnl () ++ body ++ str "hence thesis." ++ fnl () ++ str "end proof." ++ fnl ());
     unfreeze p; States.unfreeze s)
 

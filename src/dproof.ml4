@@ -13,19 +13,19 @@ let resize_buffer ibuf = let open Bytes in
 let top_stderr x = msg_with ~pp_tag:Ppstyle.pp_tag !Pp_control.err_ft x
 
 let prompt_char ic ibuf count = Coqloop.(
-    let bol = match ibuf.bols with
-      | ll::_ -> Int.equal ibuf.len ll
-      | [] -> Int.equal ibuf.len 0
-    in
-    if bol && not !Flags.print_emacs then top_stderr (str (ibuf.prompt()));
-    try
-      let c = input_char ic in
-      if c == '\n' then ibuf.bols <- (ibuf.len+1) :: ibuf.bols;
-      if ibuf.len == String.length ibuf.str then resize_buffer ibuf;
-      ibuf.str.[ibuf.len] <- c;
-      ibuf.len <- ibuf.len + 1;
-      Some c
-    with End_of_file -> None)
+  let bol = match ibuf.bols with
+    | ll::_ -> Int.equal ibuf.len ll
+    | [] -> Int.equal ibuf.len 0
+  in
+  if bol && not !Flags.print_emacs then top_stderr (str (ibuf.prompt()));
+  try
+    let c = input_char ic in
+    if c == '\n' then ibuf.bols <- (ibuf.len+1) :: ibuf.bols;
+    if ibuf.len == String.length ibuf.str then resize_buffer ibuf;
+    ibuf.str.[ibuf.len] <- c;
+    ibuf.len <- ibuf.len + 1;
+    Some c
+  with End_of_file -> None)
 
 let vernaclog = ref []
 let reset () = vernaclog := []
@@ -54,18 +54,18 @@ let rec diff_term env t1 t2 =
   let f_array env l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 (diff_term env) l1 l2 in
   let add e n t = Termops.push_rel_assum (n,t) e in
   if equal t1 t2 then [] else
-    match kind t1, kind t2 with
-    | Evar _, _ -> [ (t1,t2,env) ]
-    | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term env c1 c2 @ diff_term env t1 t2
-    | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (add env n t1) b1 b2
-    | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (add env n t1) k1 k2
-    | App (b1,l1), App (b2,l2) -> diff_term env b1 b2 @ f_array env l1 l2
-    | Proj (_,t1), Proj (_,t2) -> diff_term env t1 t2
-    | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term env p1 p2 @ diff_term env b1 b2 @ f_array env bl1 bl2
-    | Fix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) ->
-      let env' = CArray.fold_left2 add env ns tl1 in
-      f_array env tl1 tl2 @ f_array env' bl1 bl2
-    | _ -> failwith ""
+  match kind t1, kind t2 with
+  | Evar _, _ -> [ (t1,t2,env) ]
+  | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term env c1 c2 @ diff_term env t1 t2
+  | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (add env n t1) b1 b2
+  | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (add env n t1) k1 k2
+  | App (b1,l1), App (b2,l2) -> diff_term env b1 b2 @ f_array env l1 l2
+  | Proj (_,t1), Proj (_,t2) -> diff_term env t1 t2
+  | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term env p1 p2 @ diff_term env b1 b2 @ f_array env bl1 bl2
+  | Fix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) ->
+    let env' = CArray.fold_left2 add env ns tl1 in
+    f_array env tl1 tl2 @ f_array env' bl1 bl2
+  | _ -> failwith ""
 
 let diff_proof ?(env=Global.env ()) p1 p2 = List.concat @@ CList.map2 (diff_term env) (Proof.partial_proof p1) (Proof.partial_proof p2)
 
@@ -175,73 +175,73 @@ let pr_name = function
   | Anonymous -> str "_"
 
 let named_to_rel = Context.(function
-    | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
-    | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
+  | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
+  | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
 
 let pr_term top p1 p2 rest =
   if diff_proof p1 p2 = [] then str "thus thesis." ++ rest else
-    let (g,_,_,_,e) = Proof.proof p1 in
-    let env = Goal.V82.env e (List.hd g) in
-    let (evar,diff,env) = List.hd (diff_proof ~env p1 p2) in
-    let evmap = let (_,_,_,_,e) = Proof.proof p2 in ref e in
-    let rec pr_term ?(name=None) top env term names =
-      let typ = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
-      match kind term with
-      | LetIn (n,b,t,c) ->
-        let def = pr_term true env b names in
-        let body = pr_term false (Termops.push_rel_assum (n,t) env) term names in
-        str "claim " ++ pr_name n ++ str ":" ++ typ ++ str "." ++ fnl () ++
-        def ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
-        body ++ fnl ()
-      | Lambda (n,t,c) ->
-        let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in
-        let body =
-          str "let " ++ name ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
-          pr_term true (Termops.push_rel_assum (n,t) env) c names
-        in
-        if top then body else
-          str "claim " ++ typ ++ str "." ++ fnl () ++
-          body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
-      | Evar _ ->
+  let (g,_,_,_,e) = Proof.proof p1 in
+  let env = Goal.V82.env e (List.hd g) in
+  let (evar,diff,env) = List.hd (diff_proof ~env p1 p2) in
+  let evmap = let (_,_,_,_,e) = Proof.proof p2 in ref e in
+  let rec pr_term ?(name=None) top env term names =
+    let typ = let t = Typing.e_type_of env evmap term in pr_constr env !evmap t in
+    match kind term with
+    | LetIn (n,b,t,c) ->
+      let def = pr_term true env b names in
+      let body = pr_term false (Termops.push_rel_assum (n,t) env) term names in
+      str "claim " ++ pr_name n ++ str ":" ++ typ ++ str "." ++ fnl () ++
+      def ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
+      body ++ fnl ()
+    | Lambda (n,t,c) ->
+      let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in
+      let body =
+        str "let " ++ name ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
+        pr_term true (Termops.push_rel_assum (n,t) env) c names
+      in
+      if top then body else
         str "claim " ++ typ ++ str "." ++ fnl () ++
-        rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
-      | App (f,a) ->
-        let fs = pr_term top env f names in
-        let pr_branch (a,n) t =
-          let name = new_name None in
-          a ++ pr_term ~name:(Some name) top env t names, name::n
-        in
-        let (args,names) = Array.fold_left pr_branch (mt (), []) a in
-        fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
-      | Cast (c,_,t) -> pr_term top env c names
-      | Case (ci,t,c,bs) ->
-        let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env).mind_packets.(i) in
-        let remove_lam n c =
-          let rec f n c a e =
-            if n=0 then a,e,c else
-              match kind c with
-              | Lambda (x,t,c) ->
-                let newe = Termops.push_rel_assum (x,t) e in
-                f (n-1) c (x::a) newe
-              | _ -> a,e,c
-          in f n c [] env
-        in
-        let pr_br n c =
-          let con = Name ind.mind_consnames.(n) in
-          let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
-          let args = List.rev args in
-          let body = pr_term true env br names in
-          str "suppose it is (" ++
-          prlist_with_sep spc pr_name (con::args) ++
-          str ")." ++ fnl () ++ body ++ str "hence thesis." ++ fnl ()
-        in
-        str "claim " ++ typ ++ str "." ++ fnl () ++
-        str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
-        prvecti_with_sep mt pr_br bs ++
-        str "end cases." ++ fnl () ++ str "end claim." ++ fnl ()
-      | Rel _ | Var _ | Const _ | Construct _ -> mt ()
-      | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
-    in pr_term top env diff []
+        body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
+    | Evar _ ->
+      str "claim " ++ typ ++ str "." ++ fnl () ++
+      rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+    | App (f,a) ->
+      let fs = pr_term top env f names in
+      let pr_branch (a,n) t =
+        let name = new_name None in
+        a ++ pr_term ~name:(Some name) top env t names, name::n
+      in
+      let (args,names) = Array.fold_left pr_branch (mt (), []) a in
+      fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
+    | Cast (c,_,t) -> pr_term top env c names
+    | Case (ci,t,c,bs) ->
+      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env).mind_packets.(i) in
+      let remove_lam n c =
+        let rec f n c a e =
+          if n=0 then a,e,c else
+          match kind c with
+          | Lambda (x,t,c) ->
+            let newe = Termops.push_rel_assum (x,t) e in
+            f (n-1) c (x::a) newe
+          | _ -> a,e,c
+        in f n c [] env
+      in
+      let pr_br n c =
+        let con = Name ind.mind_consnames.(n) in
+        let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
+        let args = List.rev args in
+        let body = pr_term true env br names in
+        str "suppose it is (" ++
+        prlist_with_sep spc pr_name (con::args) ++
+        str ")." ++ fnl () ++ body ++ str "hence thesis." ++ fnl ()
+      in
+      str "claim " ++ typ ++ str "." ++ fnl () ++
+      str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
+      prvecti_with_sep mt pr_br bs ++
+      str "end cases." ++ fnl () ++ str "end claim." ++ fnl ()
+    | Rel _ | Var _ | Const _ | Construct _ -> mt ()
+    | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
+  in pr_term top env diff []
 
 let rec pr_tree s = function
   | Path (Proof (p1,v,p2), next) ->

@@ -162,6 +162,49 @@ let eq_env (g1,e1) (g2,e2) =
   List.length g1 = 0 || List.length g2 = 0 ||
   Printer.pr_context_of (Goal.V82.env e1 (List.hd g1)) e1 = Printer.pr_context_of (Goal.V82.env e2 (List.hd g2)) e2
 
+let replace_name pat str =
+  Feedback.msg_debug (Pp.str (pat^"->"^str));
+  let code = "\\(^\\|[]\n -/:-@[-^`{-~]\\)" in
+  let pat = Str.global_replace (Str.regexp "^(\\(.*\\))$") "\\1" pat in
+  let pat = Str.global_replace (Str.regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
+  let pat = code ^ "\\(" ^ Str.global_replace (Str.regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ code in
+  let str = ("\\1"^str^"\\3") in
+  let reg = (Str.regexp pat) in
+  let rec repall s =
+    try ignore (Str.search_forward reg s 0); repall (Str.global_replace reg str s)
+    with Not_found -> s
+  in
+  List.map repall
+
+(* from detyping.ml*)
+let evar_defs env evmap evk cl = Term.(
+  let bound_to_itself_or_letin decl c =
+    match decl with
+    | Context.Named.Declaration.LocalDef _ -> true
+    | Context.Named.Declaration.LocalAssum (id,_) ->
+      try
+        let rel = Environ.lookup_rel (destRel c) env in
+        Context.Rel.Declaration.get_name rel = (Names.Name id)
+      with Not_found -> isVarId id c
+  in
+  try
+    let l = Evd.evar_instance_array bound_to_itself_or_letin (Evd.find evmap evk) cl in
+    let fvs,rels = List.fold_left (fun (fvs,rels) (_,c) -> match kind_of_term c with Rel n -> (fvs,Int.Set.add n rels) | Var id -> (Id.Set.add id fvs,rels) | _ -> (fvs,rels)) (Id.Set.empty,Int.Set.empty) l in
+    let l = Evd.evar_instance_array (fun d c ->(bound_to_itself_or_letin d c && not (isRel c && Int.Set.mem (destRel c) rels || isVar c && (Id.Set.mem (destVar c) fvs)))) (Evd.find evmap evk) cl in
+    l
+  with Not_found -> CArray.map_to_list (fun c -> (Id.of_string "__",c)) cl)
+
+let replace_with_evar env evmap (k,a) = function
+  | Vernacexpr.VernacExtend (n,args) ->
+    let args_str = List.map (fun a -> Pp.string_of_ppcmds (Pptactic.pr_raw_generic env a)) args in
+    let rep = evar_defs env evmap k a in
+    let new_args = List.fold_left (fun a (id,c) -> replace_name (Names.Id.to_string id) (string_of_ppcmds (pr_constr env evmap c)) a) args_str rep in
+    let stream = Stream.of_string (String.concat " " new_args ^ ".") in
+    begin match Pcoq.Gram.entry_parse Pcoq.main_entry (Pcoq.Gram.parsable stream) with
+      | Some (_,v) -> v
+      | None -> failwith "argument replacement faild" end
+  | _ -> failwith "invalid command"
+
 let pr_simple ?(first=false) p1 p2 v =
   let (g,_,_,_,e) = Proof.proof p1 in
   let diff = diff_proof p1 p2 in
@@ -189,9 +232,9 @@ let pr_term top p1 p2 rest =
     match kind term with
     | LetIn (n,b,t,c) ->
       let def = pr_term true env b names in
-      let body = pr_term false (Termops.push_rel_assum (n,t) env) term names in
+      let body = pr_term false (Termops.push_rel_assum (n,t) env) c names in
       str "claim " ++ pr_name n ++ str ":" ++ typ ++ str "." ++ fnl () ++
-      def ++ fnl () ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
+      def ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
       body ++ fnl ()
     | Lambda (n,t,c) ->
       let name = match n with Name n -> Id.print n | Anonymous -> new_name (Some t) in

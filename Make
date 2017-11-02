@@ -1,3 +1,5 @@
+src/proc2dec.ml
+src/reproof.ml
 src/dproof.ml4
 src/dproof.mllib
 theories/DProof.v

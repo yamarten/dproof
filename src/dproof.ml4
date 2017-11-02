@@ -101,14 +101,6 @@ let collect_id t =
 
 let env = ref []
 
-let (search_name, add_name, new_name, reset_name) =
-  let (x: (std_ppcmds*types option) list ref) = ref [] in
-  let search a = List.assoc a !x in
-  let add a b = x := (a,b)::!x in
-  let fresh t = let n = str "test_name" in add n t; n in
-  let reset () = x := [] in
-  search, add, fresh, reset
-
 let prftree s =
   let s = Stream.of_list s in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
@@ -222,7 +214,7 @@ let push_rel id typ (env,avoids,map) =
   id, (env,avoids,map)
 
 let pr_term env top p1 p2 rest =
-  if diff_proof p1 p2 = [] then str "thus thesis." ++ rest else
+  if diff_proof p1 p2 = [] then str "thus thesis." ++ rest env else
   let (e,_,_) = env in
   let (evar,diff,_) = List.hd (diff_proof ~env:e p1 p2) in
   let evmap = let (_,_,_,_,em) = Proof.proof p2 in ref em in
@@ -251,11 +243,11 @@ let pr_term env top p1 p2 rest =
         body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
     | Evar _ ->
       str "claim " ++ typ ++ str "." ++ fnl () ++
-      rest ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+      rest env ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
     | App (f,a) ->
       let fs = pr_term top env f names in
       let pr_branch (a,n) t =
-        let name = new_name None in
+        let name = str "new_name" in
         a ++ pr_term top env t names, name::n
       in
       let (args,names) = Array.fold_left pr_branch (mt (), []) a in
@@ -295,7 +287,7 @@ let rec pr_tree env s = function
   | Path (Proof (p1,v,p2), next) ->
     let (g1,_,_,_,e1) = Proof.proof p1 in
     let (g2,_,_,_,e2) = Proof.proof p2 in
-    if not (eq_env (g1,e1) (g2,e2)) then pr_term env (next=End) p1 p2 (pr_tree env (mt ()) next) ++ s else
+    if not (eq_env (g1,e1) (g2,e2)) then pr_term env (next=End) p1 p2 (fun e->pr_tree e (mt ()) next) ++ s else
     if List.tl g1 = g2 then pr_tree env (pr_simple ~first:true env p1 p2 v ++ s) next else
     if List.tl g1 = List.tl g2 then pr_tree env (pr_simple env p1 p2 v ++ s) next else
       warn "unsupported" v
@@ -305,20 +297,22 @@ let rec pr_tree env s = function
   | _ -> s ++ str "(* todo *)"
 
 and pr_branch env p l =
-(* 環境変更とかのやつ *)
+  (* 環境変更とかのやつ *)
   let getp = function
     | Path (Proof (p,_,_), _) | Branch ((Proof (p,_,_)), _) -> let (g,_,_,_,e) = Proof.proof p in pr_concl (g,e) env
     | _ -> str "???"
   in
   let pr b =
-    let id = new_name None in
+    let id = str "new_name" in
     str "claim " ++ id ++ str":(" ++ getp b ++ str ")." ++ fnl () ++ pr_tree env (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
   in
   let join = match p with
     | Proof (p1,v,p2) ->
-      let (g,_,_,_,e) = Proof.proof p1 in
+      let (g1,_,_,_,e1) = Proof.proof p1 in
+      let (g2,_,_,_,e2) = Proof.proof p2 in
+      if not (eq_env (g1,e1) (g2,e2)) then pr_term env false p1 p2 (fun _->mt ()) else
       let diff = diff_proof p1 p2 in
-      str "have" ++ spc () ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ spc () ++
+      str "have" ++ spc () ++ str "(" ++ pr_concl (g1,e1) env ++ str ")" ++ spc () ++
       find_vars diff ++
       str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
     | Warn s -> s
@@ -350,7 +344,6 @@ let start () =
   let p = Proof_global.freeze `No in
   let s = States.freeze `Yes in
   load ();
-  reset_name ();
   Feedback.msg_notice (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ());
   Proof_global.unfreeze p;
   States.unfreeze s
@@ -361,7 +354,7 @@ let start_term () =
     let p = freeze `No in
     let s = States.freeze `Yes in
     load ();
-    let body = pr_term (init_env ()) true (give_me_the_proof ()) (proof_of_state p) (mt ()) in
+    let body = pr_term (init_env ()) true (give_me_the_proof ()) (proof_of_state p) (fun _->mt ()) in
     Feedback.msg_notice (str "proof." ++ fnl () ++ body ++ str "hence thesis." ++ fnl () ++ str "end proof." ++ fnl ());
     unfreeze p; States.unfreeze s)
 

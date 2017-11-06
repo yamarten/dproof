@@ -9,24 +9,29 @@ let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *
 let pr_constr (env,_,_) evar_map constr =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env evar_map constr)
 
-let rec diff_term env t1 t2 =
-  let f_array env l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 (diff_term env) l1 l2 in
-  let add e n t = Termops.push_rel_assum (n,t) e in
+let rec diff_term t1 t2 =
+  let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
   if equal t1 t2 then [] else
   match kind t1, kind t2 with
-  | Evar _, _ -> [ (t1,t2,env) ]
-  | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term env c1 c2 @ diff_term env t1 t2
-  | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term env t1 t2 @ diff_term (add env n t1) b1 b2
-  | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term env t1 t2 @ diff_term env b1 b2 @ diff_term (add env n t1) k1 k2
-  | App (b1,l1), App (b2,l2) -> diff_term env b1 b2 @ f_array env l1 l2
-  | Proj (_,t1), Proj (_,t2) -> diff_term env t1 t2
-  | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term env p1 p2 @ diff_term env b1 b2 @ f_array env bl1 bl2
-  | Fix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) ->
-    let env' = CArray.fold_left2 add env ns tl1 in
-    f_array env tl1 tl2 @ f_array env' bl1 bl2
-  | _ -> failwith ""
+  | Evar e1, Evar e2 -> [None]
+  | Evar _, _ -> [ Some (t1,t2) ]
+  | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term c1 c2 @ diff_term t1 t2
+  | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
+  | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term t1 t2 @ diff_term b1 b2 @ diff_term k1 k2
+  | App (b1,l1), App (b2,l2) -> diff_term b1 b2 @ f_array l1 l2
+  | Proj (_,t1), Proj (_,t2) -> diff_term t1 t2
+  | Case (_,p1,b1,bl1), Case (_,p2,b2,bl2) -> diff_term p1 p2 @ diff_term b1 b2 @ f_array bl1 bl2
+  | Fix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2))
+  | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array tl1 tl2 @ f_array bl1 bl2
+  | _ -> failwith "proof term changed"
 
-let diff_proof ?(env=Global.env ()) p1 p2 = List.concat @@ CList.map2 (diff_term env) (Proof.partial_proof p1) (Proof.partial_proof p2)
+let diff_proof p1 p2 =
+  let evars = List.concat @@ CList.map2 (diff_term) (Proof.partial_proof p1) (Proof.partial_proof p2) in
+  let changes = List.filter Option.has_some evars in
+  let change_num = List.length changes in
+  if change_num = 0 then None else
+  if change_num > (if Option.has_some (List.hd evars) then 1 else 0) then failwith "tail of the goals changed" else
+  List.hd changes
 
 let find_vars c =
   let collect a c = match kind c with
@@ -120,8 +125,7 @@ let pr_simple ?(first=false) env p1 p2 v =
   let diff = diff_proof p1 p2 in
   let tac = if first then "have" else "then" in
   str tac ++ spc () ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ spc () ++
-  find_vars diff ++
-  str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
+  str "by * using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
 
 (* TODO: Anonymous時の処理 *)
 let pr_name = function
@@ -139,9 +143,9 @@ let push_rel id typ (env,avoids,map) =
   id, (env,avoids,map)
 
 let pr_term env top p1 p2 rest =
-  if diff_proof p1 p2 = [] then str "thus thesis." ++ rest env else
+  if diff_proof p1 p2 = None then str "thus thesis." ++ rest env else
   let (e,_,_) = env in
-  let (evar,diff,_) = List.hd (diff_proof ~env:e p1 p2) in
+  let Some (evar,diff) = diff_proof p1 p2 in
   let evmap = let (_,_,_,_,em) = Proof.proof p2 in ref em in
   let rec pr_term top env term names =
     let typ =
@@ -237,8 +241,7 @@ and pr_branch env p l =
       if not (eq_env (g1,e1) (g2,e2)) then pr_term env false p1 p2 (fun _->mt ()) else
       let diff = diff_proof p1 p2 in
       str "have" ++ spc () ++ str "(" ++ pr_concl (g1,e1) env ++ str ")" ++ spc () ++
-      find_vars diff ++
-      str "using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
+      str "by * using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
     | Warn s -> s
   in
   List.fold_left (fun t b -> pr b ++ t) (mt ()) l ++ join

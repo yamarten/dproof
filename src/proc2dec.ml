@@ -31,47 +31,32 @@ let diff_proof p1 p2 =
   let change_num = List.length changes in
   if change_num = 0 then None else
   if change_num > (if Option.has_some (List.hd evars) then 1 else 0) then failwith "tail of the goals changed" else
-  List.hd changes
+    List.hd changes
 
-let find_vars c =
-  let collect a c = match kind c with
-    | Rel _ -> str "Rel"::a (* todo *)
-    | Const (c,_) -> Label.print (Constant.label c)::a
-    | _ -> str "else"::a (* todo *)
+let find_vars env =
+  let rec collect env (vars,news) c = match kind c with
+    | Rel i -> (Context.Rel.Declaration.get_name (Environ.lookup_rel i env))::vars,news
+    | Const (c,_) -> (Name (Label.to_id (Constant.label c)))::vars,news
+    | Var n -> (Name n)::vars,news
+    | LetIn (n,c,t,b) -> collect (Termops.push_rel_assum (n,t) env) (collect env (vars,c::news) c) c
+    | Lambda (n,t,c) | Prod (n,t,c) -> collect (Termops.push_rel_assum (n,t) env) (vars,c::news) c
+    (* | Fix _ -> _ *)
+    | Case (_,_,c,b) -> Array.fold_left (collect env) (collect env (vars,news) c) b
+    | App (c,a) -> Array.fold_left (collect env) (collect env (vars,news) c) a
+    | Cast (c,_,_) -> collect env (vars,news) c
+    | _ -> vars,news
   in
-  let a = List.concat @@ List.map (fun (_,x,_) -> (List.hd (collect [] x)) :: fold collect [] x) c in
-  (*if a = [] then mt () else str "by " ++ prlist_with_sep pr_comma (fun x -> x) a ++ spc ()*)
-  str "by * "
+  collect env ([],[])
+
 let rename avoid id =
   let rec f id = if Id.Set.mem id avoid then f (Nameops.lift_subscript id) else id in
   let ret = f id in
   ret, Id.Set.add ret avoid
 
-let collect_id t =
-  let rec f s t = match kind t with
-    | Var i -> Id.Set.add i s
-    | Prod (Name i,_,_) | Lambda (Name i,_,_) | LetIn (Name i,_,_,_) -> Id.Set.add i (fold f s t)
-    | Const (c,_) -> Id.Set.add (Label.to_id (Constant.label c)) s
-    | Ind ((i,_),_) | Construct (((i,_),_),_) -> Id.Set.add (Label.to_id (MutInd.label i)) s
-    | Fix (_,(ns,_,_)) | CoFix (_,(ns,_,_)) -> Array.fold_left (fun s n -> match n with Anonymous->s | Name i -> Id.Set.add i s) (fold f s t) ns
-    | _ -> fold f s t
-  in
-  f Id.Set.empty t
-
-let env = ref []
-
 let prftree s =
   let s = Stream.of_list s in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
   let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
-  let focus _ _ = false in (* TODO *)
-  let rec setenv = function
-    | Proof (_,_,p)::l -> env := Id.Set.elements (List.fold_left (fun s c -> Id.Set.union (collect_id c) s) (Id.Set.of_list !env) (Proof.partial_proof p))
-    | _::l -> setenv l
-    | _ -> ()
-  in
-  setenv (List.rev (Stream.npeek (1000) s));
-
   let rec f () = try(
     match Stream.next s with
     | Proof (p1,v,p2) ->
@@ -80,8 +65,6 @@ let prftree s =
       let (g2,b2,_,_,_) = Proof.proof p2 in
       let n1 = List.length g1 in
       let n2 = List.length g2 in
-      if focus g1 g2 then warntree "focus" else
-      if focus g2 g1 then warntree "unfocus" else
       if n1 < n2 then
         if sublist g1 g2 then
           let rec fork n = if n>=0 then f ()::fork (n-1) else [] in

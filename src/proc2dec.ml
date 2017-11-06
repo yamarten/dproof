@@ -115,35 +115,6 @@ let replace_name pat str =
   in
   List.map repall
 
-(* (* from detyping.ml*)
-   let evar_defs env evmap evk cl = Term.(
-   let bound_to_itself_or_letin decl c =
-    match decl with
-    | Context.Named.Declaration.LocalDef _ -> true
-    | Context.Named.Declaration.LocalAssum (id,_) ->
-      try
-        let rel = Environ.lookup_rel (destRel c) env in
-        Context.Rel.Declaration.get_name rel = (Names.Name id)
-      with Not_found -> isVarId id c
-   in
-   try
-    let l = Evd.evar_instance_array bound_to_itself_or_letin (Evd.find evmap evk) cl in
-    let fvs,rels = List.fold_left (fun (fvs,rels) (_,c) -> match kind_of_term c with Rel n -> (fvs,Int.Set.add n rels) | Var id -> (Id.Set.add id fvs,rels) | _ -> (fvs,rels)) (Id.Set.empty,Int.Set.empty) l in
-    let l = Evd.evar_instance_array (fun d c ->(bound_to_itself_or_letin d c && not (isRel c && Int.Set.mem (destRel c) rels || isVar c && (Id.Set.mem (destVar c) fvs)))) (Evd.find evmap evk) cl in
-    l
-   with Not_found -> CArray.map_to_list (fun c -> (Id.of_string "__",c)) cl)
-
-   let replace_with_evar env evmap (k,a) = function
-   | Vernacexpr.VernacExtend (n,args) ->
-    let args_str = List.map (fun a -> Pp.string_of_ppcmds (Pptactic.pr_raw_generic env a)) args in
-    let rep = evar_defs env evmap k a in
-    let new_args = List.fold_left (fun a (id,c) -> replace_name (Names.Id.to_string id) (string_of_ppcmds (pr_constr env evmap c)) a) args_str rep in
-    let stream = Stream.of_string (String.concat " " new_args ^ ".") in
-    begin match Pcoq.Gram.entry_parse Pcoq.main_entry (Pcoq.Gram.parsable stream) with
-      | Some (_,v) -> v
-      | None -> failwith "argument replacement faild" end
-   | _ -> failwith "invalid command" *)
-
 let pr_simple ?(first=false) env p1 p2 v =
   let (g,_,_,_,e) = Proof.proof p1 in
   let diff = diff_proof p1 p2 in

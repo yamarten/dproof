@@ -2,12 +2,13 @@ open Constr
 open Names
 open Pp
 
-type p_or_w = Proof of Proof.proof * Vernacexpr.vernac_expr * Proof.proof | Warn of std_ppcmds
-type prftree = End | Path of p_or_w * prftree | Branch of p_or_w * prftree list | Other of p_or_w
+type env = {env:Environ.env; rename:(name*name) list; avoid:Id.t list}
+type prfstep = Vernacexpr.vernac_expr * (constr * constr) option * (Goal.goal list * Evd.evar_map)
+type prftree = End | Path of prfstep * prftree | Branch of prfstep * prftree list | Other of std_ppcmds * prftree
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
 
-let pr_constr (env,_,_) evar_map constr =
-  Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env evar_map constr)
+let pr_constr env evar_map constr =
+  Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env evar_map constr)
 
 let rec diff_term t1 t2 =
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
@@ -16,7 +17,7 @@ let rec diff_term t1 t2 =
   | Evar e1, Evar e2 -> [None]
   | Evar _, _ -> [ Some (t1,t2) ]
   | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term c1 c2 @ diff_term t1 t2
-  | Prod (n,t1,b1), Prod (_,t2,b2) | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
+  | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
   | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term t1 t2 @ diff_term b1 b2 @ diff_term k1 k2
   | App (b1,l1), App (b2,l2) -> diff_term b1 b2 @ f_array l1 l2
   | Proj (_,t1), Proj (_,t2) -> diff_term t1 t2
@@ -53,44 +54,39 @@ let rename avoid id =
   let ret = f id in
   ret, Id.Set.add ret avoid
 
+let pr_concl (g,e) env =
+  let (g,e) = Goal.V82.nf_evar e (List.hd g)  in
+  let concl = Goal.V82.concl e g in
+  Printer.pr_goal_concl_style_env (env.env) e concl
+
 let prftree s =
   let s = Stream.of_list s in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
   let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
-  let rec f () = try(
-    match Stream.next s with
-    | Proof (p1,v,p2) ->
-      let warntree m = Path (Warn (warn m v), f ()) in
-      let (g1,b1,_,_,_) = Proof.proof p1 in
-      let (g2,b2,_,_,_) = Proof.proof p2 in
-      let n1 = List.length g1 in
-      let n2 = List.length g2 in
+  let warn s v p = Other (warn s v, p) in
+  let rec f () =
+    let (p1,v,p2) = Stream.next s in
+    let (g1,b1,_,_,_) = Proof.proof p1 in
+    let (g2,b2,_,_,e) = Proof.proof p2 in
+    let n1 = List.length g1 in
+    let n2 = List.length g2 in
+    try(
+      let diff = diff_proof p1 p2 in
+      if n1 = 0 then warn "no goals" v (f ()) else
+      let step = (v, diff, (g1,e)) in
       if n1 < n2 then
         if sublist g1 g2 then
           let rec fork n = if n>=0 then f ()::fork (n-1) else [] in
-          Branch (Proof (p1,v,p2), fork (n2-n1))
-        else warntree "subgoals increased"
+          Branch (step, fork (n2-n1))
+        else warn "subgoals increased" v (f ())
       else
-      if n1 = 0 then warntree "no goals" else
-      if List.tl g1 = g2 then Path (Proof (p1,v,p2), End) else
-      if List.tl g1 = List.tl g2 then Path (Proof (p1,v,p2), f ()) else
-        warntree "unsupported"
-    | Warn s -> Path (Warn s, f ()))
-    with _ -> End
+      if List.tl g1 = g2 then Path (step, End) else
+      if List.tl g1 = List.tl g2 then Path (step, f ()) else
+        warn "unsupported" v (f ()))
+    with _ -> warn "something happens" v End
   in f ()
 
-let pr_concl (g,e) (env,_,_) =
-  let (g,e) = Goal.V82.nf_evar e (List.hd g)  in
-  let concl = Goal.V82.concl e g in
-  Printer.pr_goal_concl_style_env env e concl
-
-(* あまりにもひどいので後でなんとかしよう *)
-let eq_env (g1,e1) (g2,e2) =
-  List.length g1 = 0 || List.length g2 = 0 ||
-  Printer.pr_context_of (Goal.V82.env e1 (List.hd g1)) e1 = Printer.pr_context_of (Goal.V82.env e2 (List.hd g2)) e2
-
 let replace_name pat str =
-  Feedback.msg_debug (Pp.str (pat^"->"^str));
   let code = "\\(^\\|[]\n -/:-@[-^`{-~]\\)" in
   let pat = Str.global_replace (Str.regexp "^(\\(.*\\))$") "\\1" pat in
   let pat = Str.global_replace (Str.regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
@@ -103,11 +99,8 @@ let replace_name pat str =
   in
   List.map repall
 
-let pr_simple ?(first=false) env p1 p2 v =
-  let (g,_,_,_,e) = Proof.proof p1 in
-  let diff = diff_proof p1 p2 in
-  let tac = if first then "have" else "then" in
-  str tac ++ spc () ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ spc () ++
+let pr_simple env v diff concl =
+  str "have" ++ spc () ++ str "(" ++ pr_concl concl env ++ str ")" ++ spc () ++
   str "by * using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
 
 (* TODO: Anonymous時の処理 *)
@@ -119,21 +112,29 @@ let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
   | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
 
-let push_rel id typ (env,avoids,map) =
+let push_rel name typ env =
   (* TODO: typがenv中に存在するときの処理 *)
-  let env = Termops.push_rel_assum (id,typ) env in
-  let avoids = id::avoids in
-  id, (env,avoids,map)
+  let newe = Termops.push_rel_assum (name,typ) env.env in
+  match name with
+  | Anonymous -> name, {env with env=newe}
+  | Name id ->
+    let newid = Namegen.next_ident_away_in_goal id env.avoid in
+    let newa = newid::env.avoid in
+    Name newid, {env with env = newe; avoid = newa}
 
-let pr_term env top p1 p2 rest =
-  if diff_proof p1 p2 = None then str "thus thesis." ++ rest env else
-  let (e,_,_) = env in
-  let Some (evar,diff) = diff_proof p1 p2 in
-  let evmap = let (_,_,_,_,em) = Proof.proof p2 in ref em in
+let new_name env =
+  (* TODO:型に応じた名前 *)
+  let name = Namegen.next_ident_away_in_goal Namegen.default_prop_ident env.avoid in
+  name, {env with avoid = name::env.avoid}
+
+let pr_term top env diff rest evmap =
+  if diff = None then List.fold_left (fun s f -> f top env) (mt ()) rest else
+  let rest = ref rest in
+  let Some (evar,diff) = diff in
+  let evmap = ref evmap in
   let rec pr_term top env term names =
     let typ =
-      let (e,_,_) = env in
-      let t = Typing.e_type_of e evmap term in
+      let t = Typing.e_type_of env.env evmap term in
       pr_constr env !evmap t
     in
     match kind term with
@@ -141,9 +142,9 @@ let pr_term env top p1 p2 rest =
       let def = pr_term true env b names in
       let (id,new_env) = push_rel n t env in
       let body = pr_term false new_env c names in
-      str "claim " ++ pr_name id ++ str ":" ++ typ ++ str "." ++ fnl () ++
+      str "claim " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
       def ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
-      body ++ fnl ()
+      body
     | Lambda (n,t,c) ->
       let (id,new_env) = push_rel n t env in
       let body =
@@ -154,9 +155,12 @@ let pr_term env top p1 p2 rest =
         str "claim " ++ typ ++ str "." ++ fnl () ++
         body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
     | Evar _ ->
-      str "claim " ++ typ ++ str "." ++ fnl () ++
-      rest env ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+      let r = (List.hd !rest) top env in rest := List.tl !rest;
+      if top then r else
+        str "claim " ++ typ ++ str "." ++ fnl () ++
+        r ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
     | App (f,a) ->
+      (* TODO:色々 *)
       let fs = pr_term top env f names in
       let pr_branch (a,n) t =
         let name = str "new_name" in
@@ -166,8 +170,7 @@ let pr_term env top p1 p2 rest =
       fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
     | Cast (c,_,t) -> pr_term top env c names
     | Case (ci,t,c,bs) ->
-      let (e,_,_) = env in
-      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi e).mind_packets.(i) in
+      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
       let remove_lam n c =
         let rec f n c a e =
           if n=0 then a,e,c else
@@ -195,40 +198,42 @@ let pr_term env top p1 p2 rest =
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
   in pr_term top env diff []
 
-let rec pr_tree env s = function
-  | Path (Proof (p1,v,p2), next) ->
-    let (g1,_,_,_,e1) = Proof.proof p1 in
-    let (g2,_,_,_,e2) = Proof.proof p2 in
-    if not (eq_env (g1,e1) (g2,e2)) then pr_term env (next=End) p1 p2 (fun e->pr_tree e (mt ()) next) ++ s else
-    if List.tl g1 = g2 then pr_tree env (pr_simple ~first:true env p1 p2 v ++ s) next else
-    if List.tl g1 = List.tl g2 then pr_tree env (pr_simple env p1 p2 v ++ s) next else
-      warn "unsupported" v
-  | Path (Warn m, next) -> m ++ fnl () ++ pr_tree env s next
-  | Branch (p,l) -> pr_branch env p l ++ s
-  | End -> s
-  | _ -> s ++ str "(* todo *)"
+let rec pr_tree top env = function
+  | Path (p,n) -> pr_path top env p n
+  | Branch (p,l) -> pr_branch top env p l
+  | End -> mt ()
+  | _ -> str "(* todo *)"
 
-and pr_branch env p l =
-  let getp = function
-    | Path (Proof (p,_,_), _) | Branch ((Proof (p,_,_)), _) -> let (g,_,_,_,e) = Proof.proof p in pr_concl (g,e) env
-    | _ -> str "???"
-  in
-  let pr b =
-    let id = str "new_name" in
-    str "claim " ++ id ++ str":(" ++ getp b ++ str ")." ++ fnl () ++ pr_tree env (mt ()) b ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
-  in
-  let join = match p with
-    | Proof (p1,v,p2) ->
-      let (g1,_,_,_,e1) = Proof.proof p1 in
-      let (g2,_,_,_,e2) = Proof.proof p2 in
-      if not (eq_env (g1,e1) (g2,e2)) then pr_term env false p1 p2 (fun _->mt ()) else
-      let diff = diff_proof p1 p2 in
-      str "have" ++ spc () ++ str "(" ++ pr_concl (g1,e1) env ++ str ")" ++ spc () ++
-      str "by * using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
-    | Warn s -> s
-  in
-  List.fold_left (fun t b -> pr b ++ t) (mt ()) l ++ join
+and pr_path top env (v,diff,(g,e)) next =
+  match diff with
+  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree top env next(* TODO:simpl対応 *)
+  | Some (evar,diffterm) ->
+    let (vars,news) = find_vars env.env diffterm in
+    if news <> [] then pr_term top env diff [fun top env -> pr_tree top env next] e else
+      pr_tree false env next ++ pr_simple env v diff (g,e)
 
-let init_env () = (Global.env (),[],[])
+and pr_branch top env (v,diff,(g,e)) l =
+  if diff = None then warn "nothing happened" v ++ fnl () else
+  let Some (evar,diffterm) = diff in
+  let (vars,news) = find_vars env.env diffterm in
+  if news <> [] then pr_term false env diff (List.map (fun b top env -> pr_tree top env b) l) e else
+  let pr_br (s,e) b =
+    (* TODO:証明しなくてよかったときの処理 *)
+    let (name,newe) = new_name e in
+    let now_avoid = name::env.avoid in
+    match b with
+    | Path ((_,_,c),_) | Branch ((_,_,c),_) ->
+      let body =
+        s ++ str "claim " ++ Id.print name ++ str ":" ++ pr_concl c env ++ str "." ++ fnl () ++
+        pr_tree true {env with avoid = now_avoid} b ++ str "end claim." ++ fnl ()
+      in
+      body,newe
+    | _ -> pr_tree top env b,e
+  in
+  let (branches,env) = List.fold_left pr_br (mt (), env) l in
+  let join = str "have " ++ pr_concl (g,e) env ++ str " by * using " ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl () in
+  branches ++ join
 
-let pr_tree t = str "proof." ++ fnl () ++ pr_tree (init_env ()) (mt ()) t ++ str "hence thesis." ++fnl () ++ str "end proof."
+let init_env () = {env = Global.env (); rename = []; avoid = []}
+
+let pr_tree t = str "proof." ++ fnl () ++ pr_tree true (init_env ()) t ++ str "hence thesis." ++fnl () ++ str "end proof."

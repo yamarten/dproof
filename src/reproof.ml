@@ -46,35 +46,36 @@ let get_tokens () =
 let stop () = Coqloop.top_buffer.tokens <- Pcoq.Gram.parsable (Stream.from (prompt_char stdin Coqloop.top_buffer))
 
 let replay tokens =
-  let play (l,v) = try begin
+  let play (l,v) =
     match Vernac_classifier.classify_vernac v with
     | VtProofStep _, _ ->
       let p1 = Proof_global.give_me_the_proof () in
       let p2 = Vernacentries.interp (l,v); Proof_global.give_me_the_proof () in
-      Proof (p1, v, p2)
-    | _ -> Warn (warn "not tactic" v)
-  end with _ -> Warn (warn "error" v)
+      [(p1, v, p2)]
+    | _ -> Feedback.msg_notice (warn "not tactic, ignored" v); []
   in
   let rec f l = match Pcoq.Gram.entry_parse Pcoq.main_entry tokens with
     | Some v -> f (play v::l)
     | None -> l
   in
-  List.rev (List.tl (f []))
+  List.rev (List.fold_left List.append [] (f []))
 
 let start () =
   let p = Proof_global.freeze `No in
   let s = States.freeze `Yes in
   load ();
-  Feedback.msg_notice (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ());
+  Feedback.msg_info (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ());
   Proof_global.unfreeze p;
   States.unfreeze s
 
 let term = ref false
 let start_term () =
-  Proof_global.(
-    let p = freeze `No in
-    let s = States.freeze `Yes in
-    load ();
-    let body = pr_term (init_env ()) true (give_me_the_proof ()) (proof_of_state p) (fun _->mt ()) in
-    Feedback.msg_notice (str "proof." ++ fnl () ++ body ++ str "hence thesis." ++ fnl () ++ str "end proof." ++ fnl ());
-    unfreeze p; States.unfreeze s)
+  let p2 = Proof_global.give_me_the_proof () in
+  let p = Proof_global.freeze `No in
+  let s = States.freeze `Yes in
+  load ();
+  let p1 = Proof_global.give_me_the_proof () in
+  let (_,_,_,_,e) = Proof.proof p1 in
+  let body = pr_term true (init_env ()) (diff_proof p1 p2) [fun _ _->mt ()] e in
+  Feedback.msg_info (str "proof." ++ fnl () ++ body ++ str "hence thesis." ++ fnl () ++ str "end proof." ++ fnl ());
+  Proof_global.unfreeze p; States.unfreeze s

@@ -147,7 +147,7 @@ let pr_term top env diff rest evmap =
     | LetIn (n,b,t,c) ->
       let def = pr_term true env b names in
       let (id,new_env) = push_rel n t env in
-      let body = pr_term false new_env c names in
+      let body = pr_term top new_env c names in
       hv 2 (str "claim " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
             def ++ str "hence thesis.") ++ fnl () ++
       str "end claim." ++ fnl () ++ body
@@ -159,7 +159,7 @@ let pr_term top env diff rest evmap =
       in
       wrap_claim top typ body
     | Evar _ ->
-      let r = (List.hd !rest) top env in rest := List.tl !rest;
+      let r = (List.hd !rest) true env in rest := List.tl !rest;
       wrap_claim top typ r
     | App (f,a) ->
       (* TODO:色々 *)
@@ -219,7 +219,7 @@ and pr_branch top env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
   let Some (evar,diffterm) = diff in
   let (vars,news) = find_vars env.env diffterm in
-  if news <> [] then pr_term false env diff (List.map (fun b top env -> pr_tree top env b) l) e else
+  if news <> [] then pr_term top env diff (List.map (fun b top env -> pr_tree top env b) l) e else
   let pr_br (s,e) b =
     (* TODO:証明しなくてよかったときの処理 *)
     let (name,newe) = new_name e in

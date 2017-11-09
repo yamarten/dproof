@@ -78,7 +78,7 @@ let prftree s =
       if n1 < n2 then
         if sublist g1 g2 then
           let rec fork n = if n>=0 then f ()::fork (n-1) else [] in
-          Branch (step, fork (n2-n1))
+          Branch (step, List.rev (fork (n2-n1)))
         else warn "subgoals increased" v (f ())
       else
       if List.tl g1 = g2 then Path (step, End) else

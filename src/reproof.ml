@@ -77,5 +77,5 @@ let start_term () =
   let p1 = Proof_global.give_me_the_proof () in
   let (_,_,_,_,e) = Proof.proof p1 in
   let body = pr_term true (init_env ()) (diff_proof p1 p2) [fun _ _->mt ()] e in
-  Feedback.msg_info (str "proof." ++ fnl () ++ body ++ str "hence thesis." ++ fnl () ++ str "end proof." ++ fnl ());
+  Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body ++ str "hence thesis.") ++ fnl () ++ str "end proof." ++ fnl ());
   Proof_global.unfreeze p; States.unfreeze s

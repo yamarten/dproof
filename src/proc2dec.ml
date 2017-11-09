@@ -100,8 +100,8 @@ let replace_name pat str =
   List.map repall
 
 let pr_simple env v diff concl =
-  str "have" ++ spc () ++ str "(" ++ pr_concl concl env ++ str ")" ++ spc () ++
-  str "by * using" ++ spc () ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
+  str "have (" ++ pr_concl concl env ++ str ")" ++ spc () ++
+  str "by * using " ++  Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
 
 (* TODO: Anonymous時の処理 *)
 let pr_name = function
@@ -127,6 +127,12 @@ let new_name env =
   let name = Namegen.next_ident_away_in_goal Namegen.default_prop_ident env.avoid in
   name, {env with avoid = name::env.avoid}
 
+let wrap_claim top typ body =
+  if top then body else
+    hv 2 (str "claim " ++ typ ++ str "." ++ fnl () ++
+          body ++ str "hence thesis.") ++ fnl () ++ str "end claim." ++ fnl ()
+
+(* TODO:適度な空行 *)
 let pr_term top env diff rest evmap =
   if diff = None then List.fold_left (fun s f -> f top env) (mt ()) rest else
   let rest = ref rest in
@@ -142,23 +148,19 @@ let pr_term top env diff rest evmap =
       let def = pr_term true env b names in
       let (id,new_env) = push_rel n t env in
       let body = pr_term false new_env c names in
-      str "claim " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
-      def ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl () ++
-      body
+      hv 2 (str "claim " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
+            def ++ str "hence thesis.") ++ fnl () ++
+      str "end claim." ++ fnl () ++ body
     | Lambda (n,t,c) ->
       let (id,new_env) = push_rel n t env in
       let body =
-        str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
+        h 2 (str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str ".") ++ fnl () ++
         pr_term true new_env c names
       in
-      if top then body else
-        str "claim " ++ typ ++ str "." ++ fnl () ++
-        body ++ str "hence thesis." ++ fnl ()++ str "end claim." ++ fnl ()
+      wrap_claim top typ body
     | Evar _ ->
       let r = (List.hd !rest) top env in rest := List.tl !rest;
-      if top then r else
-        str "claim " ++ typ ++ str "." ++ fnl () ++
-        r ++ str "hence thesis." ++ fnl () ++ str "end claim." ++ fnl ()
+      wrap_claim top typ r
     | App (f,a) ->
       (* TODO:色々 *)
       let fs = pr_term top env f names in
@@ -186,14 +188,15 @@ let pr_term top env diff rest evmap =
         let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
         let args = List.rev args in
         let body = pr_term true env br names in
-        str "suppose it is (" ++
-        prlist_with_sep spc pr_name (con::args) ++
-        str ")." ++ fnl () ++ body ++ str "hence thesis." ++ fnl ()
+        hv 2 (str "suppose it is (" ++
+              prlist_with_sep (fun _ -> str " ") pr_name (con::args) ++
+              str ")." ++ fnl () ++ body ++ str "hence thesis.") ++ fnl ()
       in
-      str "claim " ++ typ ++ str "." ++ fnl () ++
-      str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
-      prvecti_with_sep mt pr_br bs ++
-      str "end cases." ++ fnl () ++ str "end claim." ++ fnl ()
+      let body =
+        str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
+        prvecti_with_sep mt pr_br bs ++ str "end cases." ++ fnl ()
+      in
+      wrap_claim top typ body
     | Rel _ | Var _ | Const _ | Construct _ -> mt ()
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
   in pr_term top env diff []
@@ -224,16 +227,22 @@ and pr_branch top env (v,diff,(g,e)) l =
     match b with
     | Path ((_,_,c),_) | Branch ((_,_,c),_) ->
       let body =
-        s ++ str "claim " ++ Id.print name ++ str ":" ++ pr_concl c env ++ str "." ++ fnl () ++
-        pr_tree true {env with avoid = now_avoid} b ++ str "end claim." ++ fnl ()
+        s ++
+        hv 2 (str "claim " ++ Id.print name ++ str ":" ++ pr_concl c env ++ str "." ++ fnl () ++
+              pr_tree true {env with avoid = now_avoid} b ++ str "hence thesis.") ++
+        fnl () ++ str "end claim." ++ fnl ()
       in
       body,newe
     | _ -> pr_tree top env b,e
   in
   let (branches,env) = List.fold_left pr_br (mt (), env) l in
-  let join = str "have " ++ pr_concl (g,e) env ++ str " by * using " ++ Ppvernac.pr_vernac_body v ++ str "." ++ fnl () in
-  branches ++ join
+  let join =
+    hv 2 (str "have " ++ pr_concl (g,e) env ++ spc () ++ str "by * using " ++ Ppvernac.pr_vernac_body v ++ str ".")
+  in
+  branches ++ join ++ fnl ()
 
 let init_env () = {env = Global.env (); rename = []; avoid = []}
 
-let pr_tree t = str "proof." ++ fnl () ++ pr_tree true (init_env ()) t ++ str "hence thesis." ++fnl () ++ str "end proof."
+let pr_tree t =
+  fnl () ++ v 2 (str "proof." ++ fnl () ++ pr_tree true (init_env ()) t ++ str "hence thesis.") ++
+  fnl () ++ str "end proof."

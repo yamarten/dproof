@@ -34,13 +34,14 @@ let diff_proof p1 p2 =
   if change_num > (if Option.has_some (List.hd evars) then 1 else 0) then failwith "tail of the goals changed" else
     List.hd changes
 
+(* TODO:vars,newsをpr_termのものと合わせる（重複回避する） *)
 let find_vars env =
   let rec collect env (vars,news) c = match kind c with
     | Rel i -> (Context.Rel.Declaration.get_name (Environ.lookup_rel i env))::vars,news
     | Const (c,_) -> (Name (Label.to_id (Constant.label c)))::vars,news
     | Var n -> (Name n)::vars,news
-    | LetIn (n,c,t,b) -> collect (Termops.push_rel_assum (n,t) env) (collect env (vars,c::news) c) c
-    | Lambda (n,t,c) | Prod (n,t,c) -> collect (Termops.push_rel_assum (n,t) env) (vars,c::news) c
+    | LetIn (n,c,t,b) -> collect (Termops.push_rel_assum (n,t) env) (collect env (vars,n::news) c) c
+    | Lambda (n,t,c) | Prod (n,t,c) -> collect (Termops.push_rel_assum (n,t) env) (vars,n::news) c
     (* | Fix _ -> _ *)
     | Case (_,_,c,b) -> Array.fold_left (collect env) (collect env (vars,news) c) b
     | App (c,a) -> Array.fold_left (collect env) (collect env (vars,news) c) a
@@ -99,14 +100,17 @@ let replace_name pat str =
   in
   List.map repall
 
-let pr_simple env v diff concl =
-  str "have (" ++ pr_concl concl env ++ str ")" ++ spc () ++
-  str "by * using " ++  Ppvernac.pr_vernac_body v ++ str "." ++ fnl ()
-
 (* TODO: Anonymous時の処理 *)
 let pr_name = function
   | Name n -> Id.print n
   | Anonymous -> str "_"
+
+let pr_just v vars =
+  spc () ++ (if vars = [] then mt () else str "by " ++ h 0 (prlist_with_sep pr_comma pr_name vars)) ++
+  spc () ++ str "using " ++ Ppvernac.pr_vernac_body v
+
+let pr_simple env v vars concl =
+  str "have (" ++ pr_concl concl env ++ str ")" ++ pr_just v vars ++ str "." ++ fnl ()
 
 let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
@@ -213,7 +217,7 @@ and pr_path top env (v,diff,(g,e)) next =
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
     if news <> [] then pr_term top env diff [fun top env -> pr_tree top env next] e else
-      pr_tree false env next ++ pr_simple env v diff (g,e)
+      pr_tree false env next ++ pr_simple env v vars (g,e)
 
 and pr_branch top env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
@@ -237,7 +241,7 @@ and pr_branch top env (v,diff,(g,e)) l =
   in
   let (branches,env) = List.fold_left pr_br (mt (), env) l in
   let join =
-    hv 2 (str "have " ++ pr_concl (g,e) env ++ spc () ++ str "by * using " ++ Ppvernac.pr_vernac_body v ++ str ".")
+    hv 2 (str "have " ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ pr_just v vars ++ str ".")
   in
   branches ++ join ++ fnl ()
 

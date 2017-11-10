@@ -60,22 +60,18 @@ let replay tokens =
   in
   List.rev (List.fold_left List.append [] (f []))
 
-let start () =
-  let p = Proof_global.freeze `No in
-  let s = States.freeze `Yes in
-  load ();
-  Feedback.msg_info (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ());
-  Proof_global.unfreeze p;
-  States.unfreeze s
-
 let term = ref false
-let start_term () =
+let start () =
   let p2 = Proof_global.give_me_the_proof () in
   let p = Proof_global.freeze `No in
   let s = States.freeze `Yes in
   load ();
   let p1 = Proof_global.give_me_the_proof () in
-  let (_,_,_,_,e) = Proof.proof p1 in
-  let body = pr_term true (init_env ()) (diff_proof p1 p2) [fun _ _->mt ()] e in
-  Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body ++ str "hence thesis.") ++ fnl () ++ str "end proof." ++ fnl ());
+  begin
+    if !term then
+      let (_,_,_,_,e) = Proof.proof p1 in
+      let body = pr_term true (init_env ()) (diff_proof p1 p2) [fun _ _->mt ()] e in
+      Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body ++ str "hence thesis.") ++ fnl () ++ str "end proof." ++ fnl ())
+    else Feedback.msg_info (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ())
+  end;
   Proof_global.unfreeze p; States.unfreeze s

@@ -2,7 +2,7 @@ open Constr
 open Names
 open Pp
 
-type env = {env:Environ.env; rename:(name*name) list; avoid:Id.t list}
+type env = {env:Environ.env; rename:(Id.t*Id.t) list; avoid:Id.t list}
 type prfstep = Vernacexpr.vernac_expr * (constr * constr) option * (Goal.goal list * Evd.evar_map)
 type prftree = End | Path of prfstep * prftree | Branch of prfstep * prftree list | Other of std_ppcmds * prftree
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
@@ -50,11 +50,6 @@ let find_vars env =
   in
   collect env ([],[])
 
-let rename avoid id =
-  let rec f id = if Id.Set.mem id avoid then f (Nameops.lift_subscript id) else id in
-  let ret = f id in
-  ret, Id.Set.add ret avoid
-
 let pr_concl (g,e) env =
   let (g,e) = Goal.V82.nf_evar e (List.hd g)  in
   let concl = Goal.V82.concl e g in
@@ -87,8 +82,11 @@ let prftree s =
     with _ -> warn "something happens" v End
   in f ()
 
-let replace_name pat str =
-  let code = "\\(^\\|[]\n -/:-@[-^`{-~]\\)" in
+let replace_name pat str s =
+  let pat = string_of_ppcmds pat in
+  let str = string_of_ppcmds str in
+  let s = string_of_ppcmds s in
+  let code = "\\(^\\|[]\n -/:-@[-^`{-~.]\\|^\\|$\\)" in
   let pat = Str.global_replace (Str.regexp "^(\\(.*\\))$") "\\1" pat in
   let pat = Str.global_replace (Str.regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
   let pat = code ^ "\\(" ^ Str.global_replace (Str.regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ code in
@@ -96,21 +94,25 @@ let replace_name pat str =
   let reg = (Str.regexp pat) in
   let rec repall s =
     try ignore (Str.search_forward reg s 0); repall (Str.global_replace reg str s)
-    with Not_found -> s
+    with Not_found -> Pp.str s
   in
-  List.map repall
+  repall s
 
 (* TODO: Anonymous時の処理 *)
 let pr_name = function
   | Name n -> Id.print n
   | Anonymous -> str "_"
 
-let pr_just v vars =
-  spc () ++ (if vars = [] then mt () else str "by " ++ h 0 (prlist_with_sep pr_comma pr_name vars)) ++
-  spc () ++ str "using " ++ Ppvernac.pr_vernac_body v
+let pr_just v vars env =
+  let com = Ppvernac.pr_vernac_body v in
+  let com = List.fold_left (fun com (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) com) com env.rename in
+  let vars = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) (pr_name v) env.rename) vars in
+  let vars = CList.uniquize vars in
+  spc () ++ (if vars = [] then mt () else str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) vars)) ++
+  spc () ++ str "using " ++ com
 
 let pr_simple env v vars concl =
-  str "have (" ++ pr_concl concl env ++ str ")" ++ pr_just v vars ++ str "." ++ fnl ()
+  str "have (" ++ pr_concl concl env ++ str ")" ++ pr_just v vars env ++ str "." ++ fnl ()
 
 let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
@@ -123,8 +125,9 @@ let push_rel name typ env =
   | Anonymous -> name, {env with env=newe}
   | Name id ->
     let newid = Namegen.next_ident_away_in_goal id env.avoid in
+    let newmap = if id <> newid then (id,newid)::env.rename else env.rename in
     let newa = newid::env.avoid in
-    Name newid, {env with env = newe; avoid = newa}
+    Name newid, {env = newe; rename = newmap; avoid = newa;}
 
 let new_name env =
   (* TODO:型に応じた名前 *)
@@ -224,7 +227,7 @@ and pr_branch top env (v,diff,(g,e)) l =
   let Some (evar,diffterm) = diff in
   let (vars,news) = find_vars env.env diffterm in
   if news <> [] then pr_term top env diff (List.map (fun b top env -> pr_tree top env b) l) e else
-  let pr_br (s,e) b =
+  let pr_br (s,e,l) b =
     (* TODO:証明しなくてよかったときの処理 *)
     let (name,newe) = new_name e in
     let now_avoid = name::env.avoid in
@@ -236,12 +239,13 @@ and pr_branch top env (v,diff,(g,e)) l =
               pr_tree true {env with avoid = now_avoid} b ++ str "hence thesis.") ++
         fnl () ++ str "end claim." ++ fnl ()
       in
-      body,newe
-    | _ -> pr_tree top env b,e
+      body,newe,name::l
+    | _ -> pr_tree top env b,e,l
   in
-  let (branches,env) = List.fold_left pr_br (mt (), env) l in
+  let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
+  let vars = vars @ List.map (fun x -> Name x) vs in
   let join =
-    hv 2 (str "have " ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ pr_just v vars ++ str ".")
+    hv 2 (str "have " ++ str "(" ++ pr_concl (g,e) env ++ str ")" ++ pr_just v (vars) env ++ str ".")
   in
   branches ++ join ++ fnl ()
 

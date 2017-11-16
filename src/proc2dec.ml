@@ -134,10 +134,22 @@ let new_name env =
   let name = Namegen.next_ident_away_in_goal Namegen.default_prop_ident env.avoid in
   name, {env with avoid = name::env.avoid}
 
-let wrap_claim top typ body =
+let wrap_claim top ?name typ body =
   if top then body else
-    hv 2 (str "claim " ++ typ ++ str "." ++ fnl () ++
-          body ++ str "hence thesis.") ++ fnl () ++ str "end claim." ++ fnl ()
+  let n = match name with Some (Name n) -> Id.print n ++ str ":" | _ -> mt () in
+  hv 2 (str "claim " ++ n ++ typ ++ str "." ++ fnl () ++
+        body ++ str "hence thesis.") ++ fnl () ++ str "end claim." ++ fnl ()
+
+let pr_value env evmap term =
+  match kind term with
+  | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
+  (* | App _ | Lambda _ when n>0 -> *)
+  | App _  | Lambda _ | Cast _ | Prod _ -> (* Evarが含まれていると危険 *)
+    let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
+    if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty
+    then Some (pr_constr env !evmap term)
+    else None
+  | _ -> None
 
 (* TODO:適度な空行 *)
 let pr_term top env diff rest evmap =
@@ -146,6 +158,10 @@ let pr_term top env diff rest evmap =
   let Some (evar,diff) = diff in
   let evmap = ref evmap in
   let rec pr_term top env term =
+    let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
+    if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
+      str "define ___ as " ++ pr_constr env !evmap term ++ str "." ++ fnl ()
+    else
     let typ =
       let t = Typing.e_type_of env.env evmap term in
       pr_constr env !evmap t
@@ -153,12 +169,11 @@ let pr_term top env diff rest evmap =
     match kind term with
     | LetIn (n,b,t,c) ->
       let def = pr_term true env b in
-      let (id,new_env) = push_rel n t env in
+      let (name,new_env) = push_rel n t env in
       let body = pr_term top new_env c in
-      hv 2 (str "claim " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str "." ++ fnl () ++
-            def ++ str "hence thesis.") ++ fnl () ++
-      str "end claim." ++ fnl () ++ body
+      wrap_claim false ~name (pr_constr env !evmap t) def ++ body
     | Lambda (n,t,c) ->
+      (* TODO:複数のletをまとめる *)
       let (id,new_env) = push_rel n t env in
       let body =
         h 2 (str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str ".") ++ fnl () ++
@@ -169,11 +184,29 @@ let pr_term top env diff rest evmap =
       let r = (List.hd !rest) true env in rest := List.tl !rest;
       wrap_claim top typ r
     | App (f,a) ->
-      (* TODO:色々 *)
-      let fs = pr_term top env f in
-      let pr_branch a t = a ++ pr_term top env t in
-      let args = Array.fold_left pr_branch (mt ()) a in
-      fs ++ args ++ str "have " ++ typ ++ str " by *." ++ fnl ()
+      let args = (f :: Array.to_list a) in
+      let args_v = List.map (pr_value env evmap) args in
+      let justs = CList.map_filter (fun x->x) args_v in
+      let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
+      let hyps = List.rev hyps in
+      let names = ref [] in
+      let pr_branch a t =
+        let typ =
+          let t = Typing.e_type_of env.env evmap term in
+          pr_constr env !evmap t
+        in
+        if List.length hyps < 2
+        then a ++ pr_term false env t
+        else
+        let env = List.fold_left (fun e n -> {env with avoid = n::env.avoid}) env !names in
+        let (id,_) = new_name env in
+        names := id::!names;
+        a ++ wrap_claim false ~name:(Name id) typ (pr_term true env t)
+      in
+      let just = if justs = [] then mt () else str " by " ++ h 2 (prlist_with_sep pr_comma (fun x->x) (CList.uniquize justs)) in
+      if List.length hyps < 1
+      then List.fold_left pr_branch (mt ()) hyps ++ str "have " ++ typ ++ just ++ str "." ++ fnl ()
+      else List.fold_left pr_branch (mt ()) hyps ++ str "then " ++ typ ++ just ++ str "." ++ fnl ()
     | Cast (c,_,t) -> pr_term top env c
     | Case (ci,t,c,bs) ->
       let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in

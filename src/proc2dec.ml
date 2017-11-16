@@ -120,11 +120,11 @@ let named_to_rel = Context.(function
 
 let push_rel name typ env =
   (* TODO: typがenv中に存在するときの処理 *)
-  let newe = Termops.push_rel_assum (name,typ) env.env in
   match name with
-  | Anonymous -> name, {env with env=newe}
+  | Anonymous -> name, {env with env=Termops.push_rel_assum (name,typ) env.env }
   | Name id ->
     let newid = Namegen.next_ident_away_in_goal id env.avoid in
+    let newe = Termops.push_rel_assum (Name newid,typ) env.env in
     let newmap = if id <> newid then (id,newid)::env.rename else env.rename in
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}

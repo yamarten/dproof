@@ -94,9 +94,11 @@ let replace_name pat str s =
   repall s
 
 (* TODO: Anonymous時の処理 *)
-let pr_name = function
-  | Name n -> Id.print n
-  | Anonymous -> str "_"
+let name_to_id = function
+  | Name n -> n
+  | Anonymous -> Id.of_string "_"
+
+let pr_name n = Id.print (name_to_id n)
 
 let pr_just v vars env =
   let com = Ppvernac.pr_vernac_body v in
@@ -136,13 +138,18 @@ let wrap_claim top ?name typ body =
         body ++ str "hence thesis.") ++ fnl () ++ str "end claim." ++ fnl ()
 
 let pr_value env evmap term =
+  let ty = Typing.e_type_of env.env evmap term in
+  let ty_of_ty = Typing.e_type_of env.env evmap ty in
+  let value = Term.is_Set ty_of_ty || Term.is_Type ty_of_ty in
+  let x = ref None in
+  if value then ignore (Environ.fold_rel_context (fun _ r t -> if equal t (Context.Rel.Declaration.get_type r) then x := Some (Context.Rel.Declaration.get_name r); Termops.pop t) env.env ~init:ty);
+  if Option.has_some !x then Some (mkVar (name_to_id (Option.get !x))) else
   match kind term with
-  | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
+  | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some term
   (* | App _ | Lambda _ when n>0 -> *)
   | App _  | Lambda _ | Cast _ | Prod _ -> (* Evarが含まれていると危険 *)
-    let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
     if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty
-    then Some (pr_constr env !evmap term)
+    then Some term
     else None
   | _ -> None
 
@@ -194,7 +201,7 @@ let pr_term top env diff rest evmap =
         names := id::!names;
         a ++ pr_term true ~name:(Name id) env t
       in
-      let just = if justs = [] then mt () else str " by " ++ h 2 (prlist_with_sep pr_comma (fun x->x) (CList.uniquize justs)) in
+      let just = if justs = [] then mt () else str " by " ++ h 2 (prlist_with_sep pr_comma (fun x->x) (List.map (pr_constr env !evmap) (CList.uniquize justs))) in
       if List.length hyps < 1
       then List.fold_left pr_branch (mt ()) hyps ++ str "have " ++ typ ++ just ++ str "." ++ fnl ()
       else List.fold_left pr_branch (mt ()) hyps ++ str "then " ++ typ ++ just ++ str "." ++ fnl ()

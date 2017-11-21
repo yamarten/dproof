@@ -103,13 +103,14 @@ let pr_name n = Id.print (name_to_id n)
 let pr_just v vars env =
   let com = Ppvernac.pr_vernac_body v in
   let com = List.fold_left (fun com (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) com) com env.rename in
-  let vars = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) (pr_name v) env.rename) vars in
+  let vars = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) v env.rename) vars in
   let vars = CList.uniquize vars in
   spc () ++ (if vars = [] then mt () else str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) vars)) ++
   spc () ++ str "using " ++ com
 
-let pr_simple env v vars typ =
-  str "have (" ++ typ ++ str ")" ++ pr_just v vars env ++ str "." ++ fnl ()
+let pr_simple top env v vars typ =
+  let com = if top then str "have" else str "then" in
+  com ++ typ ++ pr_just v vars env ++ str "." ++ fnl ()
 
 let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
@@ -248,7 +249,17 @@ and pr_path top env (v,diff,(g,e)) next =
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
     if news <> [] then pr_term top env diff [fun top env -> pr_tree top env next] e else
-      pr_tree false env next ++ pr_simple env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+    let vars = List.map pr_name vars in
+    let next_var = match next with
+      | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
+      | _ -> None
+    in
+    begin match next_var with
+      | Some var ->
+        pr_simple top env v (pr_constr env e var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+      | None ->
+        pr_tree false env next ++ pr_simple top env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+    end
 
 and pr_branch top env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
@@ -256,24 +267,25 @@ and pr_branch top env (v,diff,(g,e)) l =
   let (vars,news) = find_vars env.env diffterm in
   if news <> [] then pr_term top env diff (List.map (fun b top env -> pr_tree top env b) l) e else
   let pr_br (s,e,l) b =
-    (* TODO:証明しなくてよかったときの処理 *)
     let (name,newe) = new_name e in
     let now_avoid = name::env.avoid in
     match b with
-    | Path ((_,Some (_,d),(_,e)),_) | Branch ((_,Some (_,d),(_,e)),_) ->
+    | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
+      let next_var = pr_value env (ref em) d in
+      if Option.has_some next_var then s,e, (pr_constr env em (Option.get next_var))::l else
       let body =
         s ++
-        hv 2 (str "claim " ++ Id.print name ++ str ":" ++ (pr_constr env e (Typing.unsafe_type_of env.env e d)) ++ str "." ++ fnl () ++
+        hv 2 (str "claim " ++ Id.print name ++ str ":" ++ (pr_constr env em (Typing.unsafe_type_of env.env em d)) ++ str "." ++ fnl () ++
               pr_tree true {env with avoid = now_avoid} b ++ str "hence thesis.") ++
         fnl () ++ str "end claim." ++ fnl ()
       in
-      body,newe,name::l
+      body,newe,(Id.print name)::l
     | _ -> pr_tree top env b,e,l
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
-  let vars = vars @ List.map (fun x -> Name x) vs in
+  let vars = (List.map pr_name vars) @ (List.rev vs) in
   let join =
-    hv 2 (str "have " ++ str "(" ++ pr_constr env e (Typing.unsafe_type_of env.env e diffterm) ++ str ")" ++ pr_just v (vars) env ++ str ".")
+    hv 2 (str "have " ++ pr_constr env e (Typing.unsafe_type_of env.env e diffterm) ++ pr_just v vars env ++ str ".")
   in
   branches ++ join ++ fnl ()
 

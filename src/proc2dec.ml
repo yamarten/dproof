@@ -110,7 +110,7 @@ let pr_just v vars env =
   spc () ++ str "using " ++ com
 
 let pr_simple top env v vars typ =
-  let com = if top then str "have" else str "then" in
+  let com = if top then str "have " else str "then " in
   com ++ typ ++ pr_just v vars env ++ str "." ++ fnl ()
 
 let named_to_rel = Context.(function

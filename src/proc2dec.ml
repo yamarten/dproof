@@ -142,9 +142,9 @@ let wrap_claim top ?name typ body =
 let pr_value env evmap term =
   let ty = Typing.e_type_of env.env evmap term in
   let ty_of_ty = Typing.e_type_of env.env evmap ty in
-  let value = Term.is_Set ty_of_ty || Term.is_Type ty_of_ty in
+  let prop = Term.is_Prop ty_of_ty in
   let x = ref None in
-  if value then ignore (Environ.fold_rel_context (fun _ r t -> if equal t (Context.Rel.Declaration.get_type r) then x := Some (Context.Rel.Declaration.get_name r); Termops.pop t) env.env ~init:ty);
+  if prop then ignore (Environ.fold_rel_context (fun _ r t -> if equal t (Context.Rel.Declaration.get_type r) then x := Some (Context.Rel.Declaration.get_name r); Termops.pop t) env.env ~init:ty);
   if Option.has_some !x then Some (mkVar (name_to_id (Option.get !x))) else
   match kind term with
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some term

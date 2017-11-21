@@ -145,13 +145,13 @@ let pr_value env evmap term =
   let prop = Term.is_Prop ty_of_ty in
   let x = ref None in
   if prop then ignore (Environ.fold_rel_context (fun _ r t -> if equal t (Context.Rel.Declaration.get_type r) then x := Some (Context.Rel.Declaration.get_name r); Termops.pop t) env.env ~init:ty);
-  if Option.has_some !x then Some (mkVar (name_to_id (Option.get !x))) else
+  if Option.has_some !x then Some (pr_name (Option.get !x)) else
   match kind term with
-  | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some term
+  | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
   (* | App _ | Lambda _ when n>0 -> *)
   | App _  | Lambda _ | Cast _ | Prod _ -> (* Evarが含まれていると危険 *)
     if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty
-    then Some term
+    then Some (pr_constr env !evmap term)
     else None
   | _ -> None
 
@@ -193,20 +193,22 @@ let pr_term top env diff rest evmap =
       let justs = CList.map_filter (fun x->x) args_v in
       let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
       let hyps = List.rev hyps in
-      let names = ref [] in
-      let pr_branch a t =
-        if List.length hyps < 2
-        then a ++ pr_term false env t
-        else
-        let env = List.fold_left (fun e n -> {env with avoid = n::env.avoid}) env !names in
-        let (id,_) = new_name env in
-        names := id::!names;
-        a ++ pr_term true ~name:(Name id) env t
+      let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
+      let names = List.rev names in
+      (* TODO:分岐先がトップレベルに展開された場合、名前被りがありうる？ *)
+      let pr_branch a t n = a ++ pr_term true ~name:(Name n) env t in
+      let branches = List.fold_left2 pr_branch (mt ()) hyps names in
+      let marge =
+        (* TODO:implicitnessをちゃんとする *)
+        let args_v = match List.hd (args_v) with
+          | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(List.tl args_v)
+          | _ -> args_v
+        in
+        let f (s,i) = function Some x -> x::s,i | None -> Id.print (List.nth names i)::s, i+1 in
+        List.rev (fst (List.fold_left f ([],0) args_v))
       in
-      let just = if justs = [] then mt () else str " by " ++ h 2 (prlist_with_sep pr_comma (fun x->x) (List.map (pr_constr env !evmap) (CList.uniquize justs))) in
-      if List.length hyps < 1
-      then List.fold_left pr_branch (mt ()) hyps ++ str "have " ++ typ ++ just ++ str "." ++ fnl ()
-      else List.fold_left pr_branch (mt ()) hyps ++ str "then " ++ typ ++ just ++ str "." ++ fnl ()
+      let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
+      branches ++ str "have " ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str "." ++ fnl ()
     | Cast (c,_,t) -> pr_term top ?name env c
     | Case (ci,t,c,bs) ->
       let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
@@ -257,7 +259,7 @@ and pr_path top env (v,diff,(g,e)) next =
     let leaf = next = End in
     begin match next_var with
       | Some var ->
-        pr_simple leaf env v (pr_constr env e var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+        pr_simple leaf env v (var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
       | None ->
         pr_tree false env next ++ pr_simple leaf env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
     end
@@ -273,7 +275,7 @@ and pr_branch top env (v,diff,(g,e)) l =
     match b with
     | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
       let next_var = pr_value env (ref em) d in
-      if Option.has_some next_var then s,e, (pr_constr env em (Option.get next_var))::l else
+      if Option.has_some next_var then s,e, (Option.get next_var)::l else
       let body =
         s ++
         hv 2 (str "claim " ++ Id.print name ++ str ":" ++ (pr_constr env em (Typing.unsafe_type_of env.env em d)) ++ str "." ++ fnl () ++

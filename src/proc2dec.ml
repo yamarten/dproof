@@ -254,11 +254,12 @@ and pr_path top env (v,diff,(g,e)) next =
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
     in
+    let leaf = next = End in
     begin match next_var with
       | Some var ->
-        pr_simple top env v (pr_constr env e var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+        pr_simple leaf env v (pr_constr env e var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
       | None ->
-        pr_tree false env next ++ pr_simple top env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+        pr_tree false env next ++ pr_simple leaf env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
     end
 
 and pr_branch top env (v,diff,(g,e)) l =

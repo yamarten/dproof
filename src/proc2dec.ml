@@ -34,12 +34,20 @@ let diff_proof p1 p2 =
   if change_num > (if Option.has_some (List.hd evars) then 1 else 0) then failwith "tail of the goals changed" else
     List.hd changes
 
+(* TODO: Anonymous時の処理 *)
+let name_to_id = function
+  | Name n -> n
+  | Anonymous -> Id.of_string "_"
+
+let pr_name n = Id.print (name_to_id n)
+
 (* TODO:vars,newsをpr_termのものと合わせる（重複回避する） *)
+(* TODO:Nameではなく名前空間を含んだものを返す *)
 let find_vars env =
   let rec collect env (vars,news) c = match kind c with
-    | Rel i -> (Context.Rel.Declaration.get_name (Environ.lookup_rel i env))::vars,news
-    | Const (c,_) -> (Name (Label.to_id (Constant.label c)))::vars,news
-    | Var n -> (Name n)::vars,news
+    | Rel i -> (pr_name (Context.Rel.Declaration.get_name (Environ.lookup_rel i env)))::vars,news
+    | Const (c,_) -> (Constant.print c)::vars,news
+    | Var n -> (Id.print n)::vars,news
     | LetIn (n,c,t,b) -> collect (Termops.push_rel_assum (n,t) env) (collect env (vars,n::news) c) c
     | Lambda (n,t,c) | Prod (n,t,c) -> collect (Termops.push_rel_assum (n,t) env) (vars,n::news) c
     (* | Fix _ -> _ *)
@@ -92,13 +100,6 @@ let replace_name pat str s =
     with Not_found -> Pp.str s
   in
   repall s
-
-(* TODO: Anonymous時の処理 *)
-let name_to_id = function
-  | Name n -> n
-  | Anonymous -> Id.of_string "_"
-
-let pr_name n = Id.print (name_to_id n)
 
 let pr_just v vars env =
   let com = Ppvernac.pr_vernac_body v in
@@ -249,7 +250,6 @@ and pr_path top env (v,diff,(g,e)) next =
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
     if news <> [] then pr_term top env diff [fun top env -> pr_tree top env next] e else
-    let vars = List.map pr_name vars in
     let next_var = match next with
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
@@ -284,7 +284,7 @@ and pr_branch top env (v,diff,(g,e)) l =
     | _ -> pr_tree top env b,e,l
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
-  let vars = (List.map pr_name vars) @ (List.rev vs) in
+  let vars = vars @ (List.rev vs) in
   let join =
     hv 2 (str "have " ++ pr_constr env e (Typing.unsafe_type_of env.env e diffterm) ++ pr_just v vars env ++ str ".")
   in

@@ -41,22 +41,25 @@ let name_to_id = function
 
 let pr_name n = Id.print (name_to_id n)
 
-(* TODO:vars,newsをpr_termのものと合わせる（重複回避する） *)
-(* TODO:Nameではなく名前空間を含んだものを返す *)
-let find_vars env =
-  let rec collect env (vars,news) c = match kind c with
-    | Rel i -> (pr_name (Context.Rel.Declaration.get_name (Environ.lookup_rel i env)))::vars,news
+(* TODO:newsをpr_termのものと合わせる（重複回避する） *)
+let find_vars env c =
+  let rec collect i temp (vars,news) c = match kind c with
+    | Rel j ->
+      if j <= i then vars,news else
+      (pr_name (Context.Rel.Declaration.get_name (Environ.lookup_rel (j-i) env)))::vars,news
     | Const (c,_) -> (Constant.print c)::vars,news
     | Var n -> (Id.print n)::vars,news
-    | LetIn (n,c,t,b) -> collect (Termops.push_rel_assum (n,t) env) (collect env (vars,n::news) c) c
-    | Lambda (n,t,c) | Prod (n,t,c) -> collect (Termops.push_rel_assum (n,t) env) (vars,n::news) c
+    | LetIn (n,c,t,b) -> collect (i+1) (n::temp) (collect i temp (vars,news) c) b
+    | Lambda (n,t,c) | Prod (n,t,c) -> collect (i+1) (n::temp) (vars,news) c
     (* | Fix _ -> _ *)
-    | Case (_,_,c,b) -> Array.fold_left (collect env) (collect env (vars,news) c) b
-    | App (c,a) -> Array.fold_left (collect env) (collect env (vars,news) c) a
-    | Cast (c,_,_) -> collect env (vars,news) c
+    | Case (_,_,c,b) -> Array.fold_left (collect i temp) (collect i temp (vars,news) c) b
+    | App (c,a) -> Array.fold_left (collect i temp) (collect i temp (vars,news) c) a
+    | Cast (c,_,_) -> collect i temp (vars,news) c
+    | Evar _ -> vars,(temp@news)
     | _ -> vars,news
   in
-  collect env ([],[])
+  let (vars,news) = collect 0 [] ([],[]) c in
+  (CList.uniquize vars, CList.uniquize news)
 
 let prftree s =
   let s = Stream.of_list s in

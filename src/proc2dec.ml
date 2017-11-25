@@ -247,7 +247,8 @@ let pr_term root top env diff rest evmap =
         prvecti_with_sep mt pr_br bs ++ str "end cases."
       in
       wrap_claim root top ?name typ body
-    | Rel _ | Var _ | Const _ | Construct _ -> mt ()
+    | Rel _ | Var _ | Const _ | Construct _ ->
+      if root then str "thus thesis by " ++ pr_constr env !evmap term ++ str "." else mt ()
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
   in pr_term root top env diff
 

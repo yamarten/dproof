@@ -106,8 +106,11 @@ let pr_just v vars env =
   let com = List.fold_left (fun com (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) com) com env.rename in
   let vars = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) v env.rename) vars in
   let vars = CList.uniquize vars in
-  spc () ++ (if vars = [] then mt () else str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) vars)) ++
-  spc () ++ str "using " ++ com
+  let by =
+    if vars = [] then mt () else
+    str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) vars) ++ spc ()
+  in
+  h 0 (spc () ++ by ++ str "using " ++ com)
 
 (* root,top *)
 let pr_instr = function
@@ -117,7 +120,7 @@ let pr_instr = function
   | false, false -> str "then "
 
 let pr_simple root top env v vars typ =
-  pr_instr (root,top) ++ typ ++ pr_just v vars env ++ str "." ++ fnl ()
+  hv 2 (pr_instr (root,top) ++ typ ++ pr_just v vars env ++ str ".")
 
 let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
@@ -143,8 +146,8 @@ let wrap_claim root top ?name typ body =
   if top && not (Option.has_some name) then body root else
   let n = match name with Some (Name n) -> Id.print n ++ str ":" | _ -> mt () in
   hv 2 (str "claim " ++ n ++ typ ++ str "." ++ fnl () ++
-        body true) ++ fnl () ++ str "end claim." ++ fnl () ++
-        if root then str "hence thesis." else mt ()
+        body true) ++ fnl () ++ str "end claim." ++
+        if root then fnl () ++ str "hence thesis." else mt ()
 
 let pr_value env evmap term =
   let ty = Typing.e_type_of env.env evmap term in
@@ -171,7 +174,7 @@ let pr_term root top env diff rest evmap =
   let rec pr_term root top ?name env term =
     let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
     if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
-      str "define ___ as " ++ pr_constr env !evmap term ++ str "." ++ fnl ()
+      str "define ___ as " ++ pr_constr env !evmap term ++ str "."
     else
     let typ =
       let t = Typing.e_type_of env.env evmap term in
@@ -182,7 +185,7 @@ let pr_term root top env diff rest evmap =
       let def root = pr_term root true env b in
       let (hname,new_env) = push_rel n t env in
       let body = pr_term root top ?name new_env c in
-      wrap_claim false false ~name:hname (pr_constr env !evmap t) def ++ body
+      wrap_claim false false ~name:hname (pr_constr env !evmap t) def ++ fnl () ++ body
     | Lambda (n,t,c) ->
       (* TODO:複数のletをまとめる *)
       let (id,new_env) = push_rel n t env in
@@ -204,7 +207,7 @@ let pr_term root top env diff rest evmap =
       let hyps = List.rev hyps in
       let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
       let names = List.rev names in
-      let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env t in
+      let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env t ++ fnl () in
       let branches = List.fold_left2 pr_branch (mt ()) hyps names in
       let marge =
         (* TODO:implicitnessをちゃんとする *)
@@ -216,7 +219,7 @@ let pr_term root top env diff rest evmap =
         List.rev (fst (List.fold_left f ([],0) args_v))
       in
       let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-      branches ++ pr_instr (root,top) ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str "." ++ fnl ()
+      branches ++ hv 2 (pr_instr (root,top) ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str ".")
     | Cast (c,_,t) -> pr_term root top ?name env c
     | Case (ci,t,c,bs) ->
       let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
@@ -241,7 +244,7 @@ let pr_term root top env diff rest evmap =
       in
       let body _ =
         str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
-        prvecti_with_sep mt pr_br bs ++ str "end cases." ++ fnl ()
+        prvecti_with_sep mt pr_br bs ++ str "end cases."
       in
       wrap_claim root top ?name typ body
     | Rel _ | Var _ | Const _ | Construct _ -> mt ()
@@ -269,7 +272,7 @@ and pr_path root top env (v,diff,(g,e)) next =
       | Some var ->
         pr_simple root leaf env v (var::vars) (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
       | None ->
-        pr_tree false false env next ++ pr_simple root leaf env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
+        pr_tree false false env next ++ fnl () ++ pr_simple root leaf env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
     end
 
 and pr_branch root top env (v,diff,(g,e)) l =
@@ -298,7 +301,7 @@ and pr_branch root top env (v,diff,(g,e)) l =
   let join =
     hv 2 (str "have " ++ pr_constr env e (Typing.unsafe_type_of env.env e diffterm) ++ pr_just v vars env ++ str ".")
   in
-  branches ++ join ++ fnl ()
+  branches ++ join
 
 let init_env () = {env = Global.env (); rename = []; avoid = []}
 

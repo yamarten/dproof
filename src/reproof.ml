@@ -71,7 +71,7 @@ let start () =
     if !term then
       let (_,_,_,_,e) = Proof.proof p1 in
       let body = pr_term true true (init_env ()) (diff_proof p1 p2) [fun _ _ _->mt ()] e in
-      Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body ++ str "hence thesis.") ++ fnl () ++ str "end proof." ++ fnl ())
+      Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body) ++ fnl () ++ str "end proof." ++ fnl ())
     else Feedback.msg_info (pr_tree (prftree (replay (get_tokens ()))) ++ fnl ())
   end;
   Proof_global.unfreeze p; States.unfreeze s

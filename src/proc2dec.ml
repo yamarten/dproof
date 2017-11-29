@@ -1,16 +1,21 @@
-open Constr
 open Names
 open Pp
 
+module RelDec = Context.Rel.Declaration
+module NamedDec = Context.Named.Declaration
+
 type env = {env:Environ.env; rename:(Id.t*Id.t) list; avoid:Id.t list}
-type prfstep = Vernacexpr.vernac_expr * (constr * constr) option * (Goal.goal list * Evd.evar_map)
+type prfstep = Vernacexpr.vernac_expr * (Constr.t * Constr.t) option * (Goal.goal list * Evd.evar_map)
 type prftree = End | Path of prfstep * prftree | Branch of prfstep * prftree list | Other of std_ppcmds * prftree
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
 
 let pr_constr env evmap c =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env evmap c)
 
+let pr_type env evmap c = pr_constr env !evmap (Typing.e_type_of env.env evmap c)
+
 let rec diff_term t1 t2 =
+  let open Constr in
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
   if equal t1 t2 then [] else
   match kind t1, kind t2 with
@@ -47,10 +52,12 @@ let pr_name_opt = function
 
 (* TODO:newsをpr_termのものと合わせる（重複回避する） *)
 let find_vars env c =
-  let rec collect i temp (vars,news) c = match kind c with
+  let rec collect i temp (vars,news) c =
+    let open Constr in
+    match kind c with
     | Rel j ->
       if j <= i then vars,news else
-      (pr_name (Context.Rel.Declaration.get_name (Environ.lookup_rel (j-i) env)))::vars,news
+      (pr_name (RelDec.get_name (Environ.lookup_rel (j-i) env)))::vars,news
     | Const (c,_) -> (Constant.print c)::vars,news
     | Var n -> (Id.print n)::vars,news
     | LetIn (n,c,t,b) -> collect (i+1) (n::temp) (collect i temp (vars,news) c) b
@@ -93,17 +100,18 @@ let prftree stream =
   in f ()
 
 let replace_name pat str target =
+  let open Str in
   let pat = string_of_ppcmds pat in
   let str = string_of_ppcmds str in
   let target = string_of_ppcmds target in
   let code = "\\(^\\|[]\n -/:-@[-^`{-~.()]\\|^\\|$\\)" in
-  let pat = Str.global_replace (Str.regexp "^(\\(.*\\))$") "\\1" pat in
-  let pat = Str.global_replace (Str.regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
-  let pat = code ^ "\\(" ^ Str.global_replace (Str.regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ code in
+  let pat = global_replace (regexp "^(\\(.*\\))$") "\\1" pat in
+  let pat = global_replace (regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
+  let pat = code ^ "\\(" ^ global_replace (regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ code in
   let str = ("\\1"^str^"\\3") in
-  let reg = (Str.regexp pat) in
+  let reg = (regexp pat) in
   let rec repall s =
-    try ignore (Str.search_forward reg s 0); repall (Str.global_replace reg str s)
+    try ignore (search_forward reg s 0); repall (global_replace reg str s)
     with Not_found -> Pp.str s
   in
   repall target
@@ -129,9 +137,9 @@ let pr_instr root leaf =
 let pr_simple root leaf ?name env tac vars typ =
   hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just tac vars env ++ str ".")
 
-let named_to_rel = Context.(function
-  | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
-  | Named.Declaration.LocalDef (n,c,t) -> Rel.Declaration.LocalDef (Name n,c,t))
+let named_to_rel = function
+  | NamedDec.LocalAssum (n,c) -> RelDec.LocalAssum (Name n,c)
+  | NamedDec.LocalDef (n,c,t) -> RelDec.LocalDef (Name n,c,t)
 
 let push_rel name typ env =
   (* TODO: typがenv中に存在するときの処理 *)
@@ -160,14 +168,16 @@ let pr_value env evmap term =
   let ty_of_ty = Typing.e_type_of env.env evmap ty in
   let prop = Term.is_Prop ty_of_ty in
   let x = ref None in
+  let open Constr in
   let pick _ r n =
-    let t = Vars.lift n (Context.Rel.Declaration.get_type r) in
+    let t = Vars.lift n (RelDec.get_type r) in
     if equal ty t then
-    x := Some (Context.Rel.Declaration.get_name r);
+    x := Some (RelDec.get_name r);
     n-1
   in
   if prop then ignore (Environ.fold_rel_context pick env.env ~init:(Environ.nb_rel env.env));
   if Option.has_some !x then Some (pr_name (Option.get !x)) else
+  let open Constr in
   match kind term with
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
   (* | App _ | Lambda _ when n>0 -> *)
@@ -181,17 +191,14 @@ let pr_value env evmap term =
 let pr_term root leaf ?name env diff rest evmap =
   if diff = None then List.fold_left (fun s f -> f root leaf name env) (mt ()) rest else
   let rest = ref rest in
-  let Some (evar,diff) = diff in
+  let (evar,diff) = Option.get diff in
   let evmap = ref evmap in
   let rec pr_term root leaf ?name env term =
     let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
     if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
       str "define ___ as " ++ pr_constr env !evmap term ++ str "."
     else
-    let typ =
-      let t = Typing.e_type_of env.env evmap term in
-      pr_constr env !evmap t
-    in
+    let open Constr in
     match kind term with
     | LetIn (n,b,t,c) ->
       let (hname,new_env) = push_rel n t env in
@@ -200,6 +207,7 @@ let pr_term root leaf ?name env diff rest evmap =
       def ++ fnl () ++ body
     | Lambda (n,t,c) ->
       (* TODO:複数のletをまとめる *)
+      let typ = pr_type env evmap term in
       let (id,new_env) = push_rel n t env in
       let body root name =
         h 2 (str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str ".") ++ fnl () ++
@@ -213,7 +221,6 @@ let pr_term root leaf ?name env diff rest evmap =
     | App (f,a) ->
       let args = (f :: Array.to_list a) in
       let args_v = List.map (pr_value env evmap) args in
-      let justs = CList.map_filter (fun x->x) args_v in
       let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
       let hyps = List.rev hyps in
       let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
@@ -230,7 +237,8 @@ let pr_term root leaf ?name env diff rest evmap =
         List.rev (fst (List.fold_left f ([],0) args_v))
       in
       let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-      branches ++ hv 2 (pr_instr root leaf ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str ".")
+      let typ = pr_type env evmap term in
+      branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ just ++ str ".")
     | Cast (c,_,t) -> pr_term root leaf ?name env c
     | Case (ci,t,c,bs) ->
       let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
@@ -257,6 +265,7 @@ let pr_term root leaf ?name env diff rest evmap =
         str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
         prvecti_with_sep mt pr_br bs ++ str "end cases."
       in
+      let typ = pr_type env evmap term in
       wrap_claim root leaf ?name typ body
     | Rel _ | Var _ | Const _ | Construct _ ->
       if root then
@@ -285,7 +294,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
     in
-  let typ = pr_constr env e (Typing.unsafe_type_of env.env e diffterm) in
+    let typ = pr_type env (ref e) diffterm in
     begin match next_var, next=End with
       | Some var, leaf ->
         pr_simple root leaf ?name env v (var::vars) typ
@@ -301,7 +310,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
-  let Some (evar,diffterm) = diff in
+  let (evar,diffterm) = Option.get diff in
   let (vars,news) = find_vars env.env diffterm in
   if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
   let pr_br (s,e,l) b =
@@ -317,7 +326,7 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
   let vars = vars @ (List.rev vs) in
-  let typ = pr_constr env e (Typing.unsafe_type_of env.env e diffterm) in
+  let typ = pr_type env (ref e) diffterm in
   let body root name =
     branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
   in

@@ -160,12 +160,13 @@ let pr_value env evmap term =
   let ty_of_ty = Typing.e_type_of env.env evmap ty in
   let prop = Term.is_Prop ty_of_ty in
   let x = ref None in
-  let pick _ r t =
-    if equal t (Context.Rel.Declaration.get_type r) then
+  let pick _ r n =
+    let t = Vars.lift n (Context.Rel.Declaration.get_type r) in
+    if equal ty t then
     x := Some (Context.Rel.Declaration.get_name r);
-    Termops.pop t
+    n-1
   in
-  if prop then ignore (Environ.fold_rel_context pick env.env ~init:ty);
+  if prop then ignore (Environ.fold_rel_context pick env.env ~init:(Environ.nb_rel env.env));
   if Option.has_some !x then Some (pr_name (Option.get !x)) else
   match kind term with
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)

@@ -205,12 +205,20 @@ let pr_term root leaf ?name env diff rest evmap =
       let def = pr_term false true ~name:hname env b in
       let body = pr_term root leaf ?name new_env c in
       def ++ fnl () ++ body
-    | Lambda (n,t,c) ->
-      (* TODO:複数のletをまとめる *)
+    | Lambda _ ->
       let typ = pr_type env evmap term in
-      let (id,new_env) = push_rel n t env in
+      (* decompose_lam_nにすべき？ *)
+      let (args,c) = Term.decompose_lam term in
+      let args = List.rev args in
+      let iter (s,env) (n,t) =
+        let (id,newe) = push_rel n t env in
+        let c = if s = mt () then mt () else pr_comma () in
+        let d = pr_name id ++ str ":" ++ pr_constr env !evmap t in
+        (s ++ c ++ d, newe)
+      in
+      let (decls, new_env) = List.fold_left iter (mt (), env) args in
       let body root name =
-        h 2 (str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str ".") ++ fnl () ++
+        h 2 (str "let " ++ decls ++ str ".") ++ fnl () ++
         pr_term root true ?name new_env c
       in
       wrap_claim root leaf ?name typ body

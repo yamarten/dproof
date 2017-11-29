@@ -7,8 +7,8 @@ type prfstep = Vernacexpr.vernac_expr * (constr * constr) option * (Goal.goal li
 type prftree = End | Path of prfstep * prftree | Branch of prfstep * prftree list | Other of std_ppcmds * prftree
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
 
-let pr_constr env evar_map constr =
-  Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env evar_map constr)
+let pr_constr env evmap c =
+  Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env evmap c)
 
 let rec diff_term t1 t2 =
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
@@ -61,8 +61,8 @@ let find_vars env c =
   let (vars,news) = collect 0 [] ([],[]) c in
   (CList.uniquize vars, CList.uniquize news)
 
-let prftree s =
-  let s = Stream.of_list s in
+let prftree stream =
+  let s = Stream.of_list stream in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
   let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
   let warn s v p = Other (warn s v, p) in
@@ -88,10 +88,10 @@ let prftree s =
     with _ -> warn "something happens" v End
   in f ()
 
-let replace_name pat str s =
+let replace_name pat str target =
   let pat = string_of_ppcmds pat in
   let str = string_of_ppcmds str in
-  let s = string_of_ppcmds s in
+  let target = string_of_ppcmds target in
   let code = "\\(^\\|[]\n -/:-@[-^`{-~.]\\|^\\|$\\)" in
   let pat = Str.global_replace (Str.regexp "^(\\(.*\\))$") "\\1" pat in
   let pat = Str.global_replace (Str.regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
@@ -102,28 +102,28 @@ let replace_name pat str s =
     try ignore (Str.search_forward reg s 0); repall (Str.global_replace reg str s)
     with Not_found -> Pp.str s
   in
-  repall s
+  repall target
 
-let pr_just v vars env =
-  let com = Ppvernac.pr_vernac_body v in
+let pr_just tac hyps env =
+  let com = Ppvernac.pr_vernac_body tac in
   let com = List.fold_left (fun com (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) com) com env.rename in
-  let vars = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) v env.rename) vars in
-  let vars = CList.uniquize vars in
+  let hyps = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) v env.rename) hyps in
+  let hyps = CList.uniquize hyps in
   let by =
-    if vars = [] then mt () else
-    str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) vars) ++ spc ()
+    if hyps = [] then mt () else
+    str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) hyps) ++ spc ()
   in
   h 0 (spc () ++ by ++ str "using " ++ com)
 
-(* root,top *)
-let pr_instr = function
+let pr_instr root leaf =
+  match root, leaf with
   | true, true -> str "thus "
   | true, false -> str "hence "
   | false, true -> str "have "
   | false, false -> str "then "
 
-let pr_simple root top env v vars typ =
-  hv 2 (pr_instr (root,top) ++ typ ++ pr_just v vars env ++ str ".")
+let pr_simple root leaf env tac vars typ =
+  hv 2 (pr_instr root leaf  ++ typ ++ pr_just tac vars env ++ str ".")
 
 let named_to_rel = Context.(function
   | Named.Declaration.LocalAssum (n,c) -> Rel.Declaration.LocalAssum (Name n,c)
@@ -145,8 +145,8 @@ let new_name env =
   let name = Namegen.next_ident_away_in_goal Namegen.default_prop_ident env.avoid in
   name, {env with avoid = name::env.avoid}
 
-let wrap_claim root top ?name typ body =
-  if top && not (Option.has_some name) then body root else
+let wrap_claim root leaf ?name typ body =
+  if leaf && not (Option.has_some name) then body root else
   let n = match name with Some (Name n) -> Id.print n ++ str ":" | _ -> mt () in
   hv 2 (str "claim " ++ n ++ typ ++ str "." ++ fnl () ++
         body true) ++ fnl () ++ str "end claim." ++
@@ -157,7 +157,12 @@ let pr_value env evmap term =
   let ty_of_ty = Typing.e_type_of env.env evmap ty in
   let prop = Term.is_Prop ty_of_ty in
   let x = ref None in
-  if prop then ignore (Environ.fold_rel_context (fun _ r t -> if equal t (Context.Rel.Declaration.get_type r) then x := Some (Context.Rel.Declaration.get_name r); Termops.pop t) env.env ~init:ty);
+  let pick _ r t =
+    if equal t (Context.Rel.Declaration.get_type r) then
+    x := Some (Context.Rel.Declaration.get_name r);
+    Termops.pop t
+  in
+  if prop then ignore (Environ.fold_rel_context pick env.env ~init:ty);
   if Option.has_some !x then Some (pr_name (Option.get !x)) else
   match kind term with
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
@@ -169,12 +174,12 @@ let pr_value env evmap term =
   | _ -> None
 
 (* TODO:適度な空行 *)
-let pr_term root top env diff rest evmap =
-  if diff = None then List.fold_left (fun s f -> f root top env) (mt ()) rest else
+let pr_term root leaf env diff rest evmap =
+  if diff = None then List.fold_left (fun s f -> f root leaf env) (mt ()) rest else
   let rest = ref rest in
   let Some (evar,diff) = diff in
   let evmap = ref evmap in
-  let rec pr_term root top ?name env term =
+  let rec pr_term root leaf ?name env term =
     let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
     if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
       str "define ___ as " ++ pr_constr env !evmap term ++ str "."
@@ -187,7 +192,7 @@ let pr_term root top env diff rest evmap =
     | LetIn (n,b,t,c) ->
       let def root = pr_term root true env b in
       let (hname,new_env) = push_rel n t env in
-      let body = pr_term root top ?name new_env c in
+      let body = pr_term root leaf ?name new_env c in
       wrap_claim false false ~name:hname (pr_constr env !evmap t) def ++ fnl () ++ body
     | Lambda (n,t,c) ->
       (* TODO:複数のletをまとめる *)
@@ -196,12 +201,12 @@ let pr_term root top env diff rest evmap =
         h 2 (str "let " ++ pr_name id ++ str ":" ++ pr_constr env !evmap t ++ str ".") ++ fnl () ++
         pr_term root true new_env c
       in
-      wrap_claim root top ?name typ body
+      wrap_claim root leaf ?name typ body
     | Evar _ ->
       let f = List.hd !rest in
       let r root = f root true env in
       rest := List.tl !rest;
-      wrap_claim root top ?name typ r
+      wrap_claim root leaf ?name typ r
     | App (f,a) ->
       let args = (f :: Array.to_list a) in
       let args_v = List.map (pr_value env evmap) args in
@@ -222,8 +227,8 @@ let pr_term root top env diff rest evmap =
         List.rev (fst (List.fold_left f ([],0) args_v))
       in
       let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-      branches ++ hv 2 (pr_instr (root,top) ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str ".")
-    | Cast (c,_,t) -> pr_term root top ?name env c
+      branches ++ hv 2 (pr_instr root leaf ++ (match name with Some n -> pr_name n ++ str ":" | _ -> mt ()) ++ typ ++ just ++ str ".")
+    | Cast (c,_,t) -> pr_term root leaf ?name env c
     | Case (ci,t,c,bs) ->
       let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
       let remove_lam n c =
@@ -249,24 +254,24 @@ let pr_term root top env diff rest evmap =
         str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
         prvecti_with_sep mt pr_br bs ++ str "end cases."
       in
-      wrap_claim root top ?name typ body
+      wrap_claim root leaf ?name typ body
     | Rel _ | Var _ | Const _ | Construct _ ->
       if root then str "thus thesis by " ++ pr_constr env !evmap term ++ str "." else mt ()
     | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
-  in pr_term root top env diff
+  in pr_term root leaf env diff
 
-let rec pr_tree root top env = function
-  | Path (p,n) -> pr_path root top env p n
-  | Branch (p,l) -> pr_branch root top env p l
+let rec pr_tree root leaf env = function
+  | Path (p,n) -> pr_path root leaf env p n
+  | Branch (p,l) -> pr_branch root leaf env p l
   | End -> mt ()
   | _ -> str "(* todo *)"
 
-and pr_path root top env (v,diff,(g,e)) next =
+and pr_path root leaf env (v,diff,(g,e)) next =
   match diff with
-  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root top env next(* TODO:simpl対応 *)
+  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root leaf env next(* TODO:simpl対応 *)
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
-    if news <> [] then pr_term root top env diff [fun root top env -> pr_tree root top env next] e else
+    if news <> [] then pr_term root leaf env diff [fun root leaf env -> pr_tree root leaf env next] e else
     let next_var = match next with
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
@@ -279,11 +284,11 @@ and pr_path root top env (v,diff,(g,e)) next =
         pr_tree false false env next ++ fnl () ++ pr_simple root leaf env v vars (pr_constr env e (Typing.unsafe_type_of env.env e diffterm))
     end
 
-and pr_branch root top env (v,diff,(g,e)) l =
+and pr_branch root leaf env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
   let Some (evar,diffterm) = diff in
   let (vars,news) = find_vars env.env diffterm in
-  if news <> [] then pr_term root top env diff (List.map (fun b root top env -> pr_tree root top env b) l) e else
+  if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf env -> pr_tree root leaf env b) l) e else
   let pr_br (s,e,l) b =
     let (name,newe) = new_name e in
     let now_avoid = name::env.avoid in
@@ -298,7 +303,7 @@ and pr_branch root top env (v,diff,(g,e)) l =
         fnl () ++ str "end claim." ++ fnl ()
       in
       body,newe,(Id.print name)::l
-    | _ -> pr_tree root top env b,e,l
+    | _ -> pr_tree root leaf env b,e,l
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
   let vars = vars @ (List.rev vs) in

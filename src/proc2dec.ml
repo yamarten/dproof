@@ -319,6 +319,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
   let (evar,diffterm) = Option.get diff in
+  try pr_ind root leaf ?name env diffterm e l v with _ ->
   let (vars,news) = find_vars env.env diffterm in
   if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
   let pr_br (s,e,l) b =
@@ -339,6 +340,46 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
     branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
   in
   wrap_claim root leaf ?name typ body
+
+and pr_ind root leaf ?name env diff evmap l v =
+  let open Term in
+  let open Pcoq in
+  let open Str in
+  (* TODO:セミコロンでつないでいる場合にも対応すべき？ *)
+  let regvar = regexp "^ *(induction +\\(.*\\)) *$" in
+  let com = string_of_ppcmds (Ppvernac.pr_vernac_body v) in
+  let var = ignore (string_match regvar com 0); matched_group 1 com in
+  let (f,args) = destApp diff in
+  let (c,_) = destConst f in
+  let name = Constant.to_string c in
+  let regind = regexp "^\\(.+\\)_\\(ind\\|rec\\|rect\\)$" in
+  if string_match regind name 0 = false then failwith "" else
+  (* *_indの第1（ではないかもしれない）引数から抜くべき？ *)
+  let typ_expr = parse_string Constr.constr (matched_group 1 name) in
+  let (_,typ) = Constrintern.interp_open_constr env.env evmap typ_expr in
+  let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd typ)) in
+  let brs = Array.sub args (1 + ind.mind_nrealargs) (Array.length ind.mind_consnames) in
+  (* caseと共通化できるのでは？ *)
+  let pr_branch i s b =
+    let (args,c) = decompose_lam_n ind.mind_consnrealargs.(i) b in
+    let f (l,e) (n,t) = let (newn,newe) = push_rel n t e in newn::l, newe in
+    let (args,newe) = List.fold_left f ([],env) args in
+    let (hyps,c) = decompose_lam_n ind.mind_consnrealargs.(i) c in
+    let f (l,e,s) (n,t) =
+      let (newn,newe) = push_rel n t e in
+      let h = str " and " ++ pr_name n ++ str ":" ++ pr_constr e evmap t in
+      newn::l, newe, h
+    in
+    let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) hyps in
+    s ++ fnl () ++
+    hv 2 (str "suppose it is (" ++ Id.print ind.mind_consnames.(i) ++ str " " ++
+    prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
+    hyps ++ str "." ++ fnl () ++
+    pr_term true leaf newe (Some ((),c)) [fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)] evmap)
+  in
+  str "per induction on " ++ str var ++ str "." ++
+  CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
+  str "end induction."
 
 let init_env () = {env = Global.env (); rename = []; avoid = []}
 

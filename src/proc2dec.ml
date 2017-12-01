@@ -79,11 +79,12 @@ let prftree stream =
   let warn s v p = Other (warn s v, p) in
   let rec f () =
     let (p1,v,p2) = Stream.next s in
+    match v with Vernacexpr.VernacBullet _ -> f () | _ ->
     let (g1,b1,_,_,_) = Proof.proof p1 in
     let (g2,b2,_,_,e) = Proof.proof p2 in
     let n1 = List.length g1 in
     let n2 = List.length g2 in
-    try(
+    try
       let diff = diff_proof p1 p2 in
       if n1 = 0 then warn "no goals" v (f ()) else
       let step = (v, diff, (g1,e)) in
@@ -95,7 +96,7 @@ let prftree stream =
       else
       if List.tl g1 = g2 then Path (step, End) else
       if List.tl g1 = List.tl g2 then Path (step, f ()) else
-        warn "unsupported" v (f ()))
+        warn "unsupported" v (f ())
     with _ -> warn "something happens" v End
   in f ()
 

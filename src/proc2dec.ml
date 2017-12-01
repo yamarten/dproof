@@ -189,103 +189,110 @@ let pr_value env evmap term =
   | _ -> None
 
 (* TODO:適度な空行 *)
+let rec pr_term root leaf ?name env evmap rest term =
+  let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
+  if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
+    str "define ___ as " ++ pr_constr env !evmap term ++ str "."
+  else
+  let open Constr in
+  match kind term with
+  | LetIn (n,b,t,c) ->
+    let (hname,new_env) = push_rel n t env in
+    let def = pr_term false true ~name:hname env evmap rest b in
+    let body = pr_term root leaf ?name new_env evmap rest c in
+    def ++ fnl () ++ body
+  | Lambda _ -> pr_lambda root leaf ?name env evmap rest term
+  | Evar _ ->
+    let f = List.hd !rest in
+    rest := List.tl !rest;
+    f root leaf name env
+  | App (f,a) -> pr_app root leaf ?name env rest evmap (f,a)
+  | Cast (c,_,t) -> pr_term root leaf ?name env evmap rest c
+  | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
+  | Rel _ | Var _ | Const _ | Construct _ ->
+    if root then
+      let i = match name with
+        | None -> str "thus"
+        | Some n -> str "have " ++ pr_name_opt name
+      in
+      i ++ str " thesis by " ++ pr_constr env !evmap term ++ str "."
+    else mt ()
+  | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
+
+and pr_lambda root leaf ?name env evmap rest term =
+  let typ = pr_type env evmap term in
+  (* decompose_lam_nにすべき？ *)
+  let (args,c) = Term.decompose_lam term in
+  let args = List.rev args in
+  let iter (s,env) (n,t) =
+    let (id,newe) = push_rel n t env in
+    let c = if s = mt () then mt () else pr_comma () in
+    let d = pr_name id ++ str ":" ++ pr_constr env !evmap t in
+    (s ++ c ++ d, newe)
+  in
+  let (decls, new_env) = List.fold_left iter (mt (), env) args in
+  let body root name =
+    h 2 (str "let " ++ decls ++ str ".") ++ fnl () ++
+    pr_term root true ?name new_env evmap rest c
+  in
+  wrap_claim root leaf ?name typ body
+
+and pr_app root leaf ?name env rest evmap (f,a) =
+  let args = (f :: Array.to_list a) in
+  let args_v = List.map (pr_value env evmap) args in
+  let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
+  let hyps = List.rev hyps in
+  let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
+  let names = List.rev names in
+  let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env evmap rest t ++ fnl () in
+  let branches = List.fold_left2 pr_branch (mt ()) hyps names in
+  let marge =
+    (* TODO:implicitnessをちゃんとする *)
+    let args_v = match List.hd (args_v) with
+      | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(List.tl args_v)
+      | _ -> args_v
+    in
+    let f (s,i) = function Some x -> x::s,i | None -> Id.print (List.nth names i)::s, i+1 in
+    List.rev (fst (List.fold_left f ([],0) args_v))
+  in
+  let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
+  let typ = pr_type env evmap (Constr.mkApp (f,a)) in
+  branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ just ++ str ".")
+
+and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
+  let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
+  let remove_lam n c =
+    let rec f n c a e =
+      if n=0 then a,e,c else
+      match Constr.kind c with
+      | Lambda (x,t,c) ->
+        let (newx,newe) = push_rel x t e in
+        f (n-1) c (newx::a) newe
+      | _ -> a,e,c
+    in f n c [] env
+  in
+  let pr_br n c =
+    let con = Name ind.mind_consnames.(n) in
+    let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
+    let args = List.rev args in
+    let body = pr_term true true env evmap rest br in
+    hv 2 (str "suppose it is (" ++
+          prlist_with_sep (fun _ -> str " ") pr_name (con::args) ++
+          str ")." ++ fnl () ++ body) ++ fnl ()
+  in
+  let body _ _ =
+    str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
+    prvecti_with_sep mt pr_br bs ++ str "end cases."
+  in
+  let typ = pr_type env evmap (Constr.mkCase (ci,t,c,bs)) in
+  wrap_claim root leaf ?name typ body
+
 let pr_term root leaf ?name env diff rest evmap =
   if diff = None then List.fold_left (fun s f -> f root leaf name env) (mt ()) rest else
   let rest = ref rest in
   let (evar,diff) = Option.get diff in
   let evmap = ref evmap in
-  let rec pr_term root leaf ?name env term =
-    let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
-    if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
-      str "define ___ as " ++ pr_constr env !evmap term ++ str "."
-    else
-    let open Constr in
-    match kind term with
-    | LetIn (n,b,t,c) ->
-      let (hname,new_env) = push_rel n t env in
-      let def = pr_term false true ~name:hname env b in
-      let body = pr_term root leaf ?name new_env c in
-      def ++ fnl () ++ body
-    | Lambda _ ->
-      let typ = pr_type env evmap term in
-      (* decompose_lam_nにすべき？ *)
-      let (args,c) = Term.decompose_lam term in
-      let args = List.rev args in
-      let iter (s,env) (n,t) =
-        let (id,newe) = push_rel n t env in
-        let c = if s = mt () then mt () else pr_comma () in
-        let d = pr_name id ++ str ":" ++ pr_constr env !evmap t in
-        (s ++ c ++ d, newe)
-      in
-      let (decls, new_env) = List.fold_left iter (mt (), env) args in
-      let body root name =
-        h 2 (str "let " ++ decls ++ str ".") ++ fnl () ++
-        pr_term root true ?name new_env c
-      in
-      wrap_claim root leaf ?name typ body
-    | Evar _ ->
-      let f = List.hd !rest in
-      rest := List.tl !rest;
-      f root leaf name env
-    | App (f,a) ->
-      let args = (f :: Array.to_list a) in
-      let args_v = List.map (pr_value env evmap) args in
-      let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
-      let hyps = List.rev hyps in
-      let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
-      let names = List.rev names in
-      let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env t ++ fnl () in
-      let branches = List.fold_left2 pr_branch (mt ()) hyps names in
-      let marge =
-        (* TODO:implicitnessをちゃんとする *)
-        let args_v = match List.hd (args_v) with
-          | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(List.tl args_v)
-          | _ -> args_v
-        in
-        let f (s,i) = function Some x -> x::s,i | None -> Id.print (List.nth names i)::s, i+1 in
-        List.rev (fst (List.fold_left f ([],0) args_v))
-      in
-      let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-      let typ = pr_type env evmap term in
-      branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ just ++ str ".")
-    | Cast (c,_,t) -> pr_term root leaf ?name env c
-    | Case (ci,t,c,bs) ->
-      let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
-      let remove_lam n c =
-        let rec f n c a e =
-          if n=0 then a,e,c else
-          match kind c with
-          | Lambda (x,t,c) ->
-            let (newx,newe) = push_rel x t e in
-            f (n-1) c (newx::a) newe
-          | _ -> a,e,c
-        in f n c [] env
-      in
-      let pr_br n c =
-        let con = Name ind.mind_consnames.(n) in
-        let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
-        let args = List.rev args in
-        let body = pr_term true true env br in
-        hv 2 (str "suppose it is (" ++
-              prlist_with_sep (fun _ -> str " ") pr_name (con::args) ++
-              str ")." ++ fnl () ++ body) ++ fnl ()
-      in
-      let body _ _ =
-        str "per cases on " ++ pr_constr env !evmap c ++ str "." ++ fnl () ++
-        prvecti_with_sep mt pr_br bs ++ str "end cases."
-      in
-      let typ = pr_type env evmap term in
-      wrap_claim root leaf ?name typ body
-    | Rel _ | Var _ | Const _ | Construct _ ->
-      if root then
-        let i = match name with
-          | None -> str "thus"
-          | Some n -> str "have " ++ pr_name_opt name
-        in
-        i ++ str " thesis by " ++ pr_constr env !evmap term ++ str "."
-      else mt ()
-    | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
-  in pr_term root leaf ?name env diff
+  pr_term root leaf ?name env evmap rest diff
 
 let rec pr_tree root leaf ?name env = function
   | Path (p,n) -> pr_path root leaf ?name env p n

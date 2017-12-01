@@ -295,10 +295,10 @@ let rec pr_tree root leaf ?name env = function
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
   match diff with
-  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root leaf env next(* TODO:simpl対応 *)
+  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root leaf ?name env next(* TODO:simpl対応 *)
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
-    if news <> [] then pr_term root leaf env diff [fun root leaf name env -> pr_tree root leaf ?name env next] e else
+    if news <> [] then pr_term root leaf ?name env diff [fun root leaf name env -> pr_tree root leaf ?name env next] e else
     let next_var = match next with
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
@@ -332,7 +332,7 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
       if Option.has_some next_var then s,e, (Option.get next_var)::l else
       let body = s ++ pr_tree false false ~name:(Name name) {env with avoid = now_avoid} b ++ fnl () in
       body,newe,(Id.print name)::l
-    | _ -> pr_tree root leaf env b,e,l
+    | _ -> pr_tree root leaf ~name:(Name name) env b,e,l
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
   let vars = vars @ (List.rev vs) in

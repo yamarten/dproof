@@ -86,18 +86,18 @@ let prftree stream =
     let n2 = List.length g2 in
     try
       let diff = diff_proof p1 p2 in
-      if n1 = 0 then warn "no goals" v (f ()) else
+      if n1 = 0 then warn "no goals" v End else
       let step = (v, diff, (g1,e)) in
       if n1 < n2 then
         if sublist g1 g2 then
           let rec fork n = if n>=0 then f ()::fork (n-1) else [] in
           Branch (step, List.rev (fork (n2-n1)))
-        else warn "subgoals increased" v (f ())
+        else warn "subgoals increase" v (f ())
       else
       if List.tl g1 = g2 then Path (step, End) else
       if List.tl g1 = List.tl g2 then Path (step, f ()) else
         warn "unsupported" v (f ())
-    with _ -> warn "something happens" v End
+    with _ -> warn "something happens" v (f ())
   in f ()
 
 let replace_name pat str target =
@@ -298,7 +298,7 @@ let rec pr_tree root leaf ?name env = function
   | Path (p,n) -> pr_path root leaf ?name env p n
   | Branch (p,l) -> pr_branch root ?name leaf env p l
   | End -> mt ()
-  | _ -> str "(* todo *)"
+  | Other (s,n) -> s ++ pr_tree root leaf ?name env n
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
   match diff with

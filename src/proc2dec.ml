@@ -72,6 +72,17 @@ let find_vars env c =
   let (vars,news) = collect 0 [] ([],[]) c in
   (CList.uniquize vars, CList.uniquize news)
 
+let reset_level, is_bullet =
+  let n = ref 0 in
+  (fun () -> n := 0),
+  let open Vernacexpr in
+  function
+  | VernacBullet _ -> true
+  | VernacFocus None | VernacFocus (Some 1)
+  | VernacSubproof None | VernacSubproof (Some 1) -> n := !n+1; true
+  | VernacUnfocus | VernacEndSubproof when !n > 0 -> n := !n-1; true
+  | _ -> false
+
 let prftree stream =
   let s = Stream.of_list stream in
   let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
@@ -79,7 +90,7 @@ let prftree stream =
   let warn s v p = Other (warn s v, p) in
   let rec f () =
     let (p1,v,p2) = Stream.next s in
-    match v with Vernacexpr.VernacBullet _ -> f () | _ ->
+    if is_bullet v then f () else
     let (g1,b1,_,_,_) = Proof.proof p1 in
     let (g2,b2,_,_,e) = Proof.proof p2 in
     let n1 = List.length g1 in
@@ -391,6 +402,7 @@ and pr_ind root leaf ?name env diff evmap l v =
 
 (* TODO:ローカル環境を持ってくる *)
 let init_env p =
+  reset_level ();
   let (g,_,_,_,e) = Proof.proof p in
   let env82 = Goal.V82.env e (List.hd g) in
   let f _ d e =

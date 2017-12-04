@@ -389,8 +389,18 @@ and pr_ind root leaf ?name env diff evmap l v =
   CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
   str "end induction."
 
-let init_env () = {env = Global.env (); rename = []; avoid = []}
+(* TODO:ローカル環境を持ってくる *)
+let init_env p =
+  let (g,_,_,_,e) = Proof.proof p in
+  let env82 = Goal.V82.env e (List.hd g) in
+  let f _ d e =
+    let n = NamedDec.get_id d in
+    let t = NamedDec.get_type d in
+    Environ.push_rel (RelDec.LocalAssum (Name n,t)) e
+  in
+  let env = Environ.fold_named_context f env82 ~init:env82 in
+  {env = env; rename = []; avoid = []}
 
-let pr_tree t =
-  fnl () ++ v 2 (str "proof." ++ fnl () ++ pr_tree true true (init_env ()) t) ++
+let pr_tree p t =
+  fnl () ++ v 2 (str "proof." ++ fnl () ++ pr_tree true true (init_env p) t) ++
   fnl () ++ str "end proof."

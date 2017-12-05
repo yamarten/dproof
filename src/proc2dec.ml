@@ -164,9 +164,22 @@ let push_rel name typ env =
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}
 
-let new_name env =
-  (* TODO:型に応じた名前 *)
-  let name = Namegen.next_ident_away_in_goal Namegen.default_prop_ident env.avoid in
+let new_name ?term env =
+  let rec f env em t = match Constr.kind t with
+    | Ind _ | Const _ | Var _ | Rel _ -> string_of_ppcmds (pr_constr env em t)
+    | App (c,_) -> f env em c
+    | Prod (n,t,c) -> f env em t ^ f (snd (push_rel n t env)) em c
+    | _ -> ""
+  in
+  let base = match term with
+    | Some (t,evmap) ->
+      let tname = f env !evmap (Typing.e_type_of env.env evmap t) in
+      let tname = Str.global_replace (Str.regexp "[^0-9a-zA-Z]") "" tname in
+      let tname = if String.length tname > 3 then String.sub tname 0 2 else tname in
+      Id.of_string (Id.to_string Namegen.default_prop_ident ^ tname)
+    | None -> Namegen.default_prop_ident
+  in
+  let name = Namegen.next_ident_away_in_goal base env.avoid in
   name, {env with avoid = name::env.avoid}
 
 let wrap_claim root leaf ?name typ body =
@@ -253,7 +266,7 @@ and pr_app root leaf ?name env rest evmap (f,a) =
   let args_v = List.map (pr_value env evmap) args in
   let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
   let hyps = List.rev hyps in
-  let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name e in n::ns,e) ([],env) hyps in
+  let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(Term.mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
   let names = List.rev names in
   let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env evmap rest t ++ fnl () in
   let branches = List.fold_left2 pr_branch (mt ()) hyps names in
@@ -342,15 +355,17 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   let (vars,news) = find_vars env.env diffterm in
   if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
   let pr_br (s,e,l) b =
-    let (name,newe) = new_name e in
-    let now_avoid = name::env.avoid in
     match b with
     | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
+      let (name,newe) = new_name ~term:(d,(ref em)) e in
+      let now_avoid = name::env.avoid in
       let next_var = pr_value env (ref em) d in
       if Option.has_some next_var then s,e, (Option.get next_var)::l else
       let body = s ++ pr_tree false false ~name:(Name name) {env with avoid = now_avoid} b ++ fnl () in
       body,newe,(Id.print name)::l
-    | _ -> pr_tree root leaf ~name:(Name name) env b,e,l
+    | _ ->
+      let (name,newe) = new_name e in
+      pr_tree root leaf ~name:(Name name) env b,e,l
   in
   let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
   let vars = vars @ (List.rev vs) in

@@ -57,7 +57,7 @@ let find_vars env c =
     match kind c with
     | Rel j ->
       if j <= i then vars,news else
-      (pr_name (RelDec.get_name (Environ.lookup_rel (j-i) env)))::vars,news
+        (pr_name (RelDec.get_name (Environ.lookup_rel (j-i) env)))::vars,news
     | Const (c,_) -> (Constant.print c)::vars,news
     | Var n -> (Id.print n)::vars,news
     | LetIn (n,c,t,b) -> collect (i+1) (n::temp) (collect i temp (vars,news) c) b
@@ -135,7 +135,7 @@ let pr_just tac hyps env =
   let hyps = CList.uniquize hyps in
   let by =
     if hyps = [] then mt () else
-    str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) hyps) ++ spc ()
+      str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) hyps) ++ spc ()
   in
   h 0 (spc () ++ by ++ str "using " ++ com)
 
@@ -184,9 +184,9 @@ let new_name ?term env =
 
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else
-  hv 2 (str "claim " ++ pr_name_opt name ++ typ ++ str "." ++ fnl () ++
-        body true None) ++ fnl () ++ str "end claim." ++
-        if root then fnl () ++ str "hence thesis." else mt ()
+    hv 2 (str "claim " ++ pr_name_opt name ++ typ ++ str "." ++ fnl () ++
+          body true None) ++ fnl () ++ str "end claim." ++
+    if root then fnl () ++ str "hence thesis." else mt ()
 
 let pr_value env evmap term =
   let ty = Typing.e_type_of env.env evmap term in
@@ -197,7 +197,7 @@ let pr_value env evmap term =
   let pick _ r n =
     let t = Vars.lift n (RelDec.get_type r) in
     if equal ty t then
-    x := Some (RelDec.get_name r);
+      x := Some (RelDec.get_name r);
     n-1
   in
   if prop then ignore (Environ.fold_rel_context pick env.env ~init:(Environ.nb_rel env.env));
@@ -352,28 +352,28 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   if diff = None then warn "nothing happened" v ++ fnl () else
   let (evar,diffterm) = Option.get diff in
   try pr_ind root leaf ?name env diffterm e l v with _ ->
-  let (vars,news) = find_vars env.env diffterm in
-  if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
-  let pr_br (s,e,l) b =
-    match b with
-    | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
-      let (name,newe) = new_name ~term:(d,(ref em)) e in
-      let now_avoid = name::env.avoid in
-      let next_var = pr_value env (ref em) d in
-      if Option.has_some next_var then s,e, (Option.get next_var)::l else
-      let body = s ++ pr_tree false false ~name:(Name name) {env with avoid = now_avoid} b ++ fnl () in
-      body,newe,(Id.print name)::l
-    | _ ->
-      let (name,newe) = new_name e in
-      pr_tree root leaf ~name:(Name name) env b,e,l
-  in
-  let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
-  let vars = vars @ (List.rev vs) in
-  let typ = pr_type env (ref e) diffterm in
-  let body root name =
-    branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
-  in
-  wrap_claim root leaf ?name typ body
+    let (vars,news) = find_vars env.env diffterm in
+    if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
+    let pr_br (s,e,l) b =
+      match b with
+      | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
+        let (name,newe) = new_name ~term:(d,(ref em)) e in
+        let now_avoid = name::env.avoid in
+        let next_var = pr_value env (ref em) d in
+        if Option.has_some next_var then s,e, (Option.get next_var)::l else
+        let body = s ++ pr_tree false false ~name:(Name name) {env with avoid = now_avoid} b ++ fnl () in
+        body,newe,(Id.print name)::l
+      | _ ->
+        let (name,newe) = new_name e in
+        pr_tree root leaf ~name:(Name name) env b,e,l
+    in
+    let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
+    let vars = vars @ (List.rev vs) in
+    let typ = pr_type env (ref e) diffterm in
+    let body root name =
+      branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
+    in
+    wrap_claim root leaf ?name typ body
 
 and pr_ind root leaf ?name env diff evmap l v =
   let open Term in
@@ -407,9 +407,9 @@ and pr_ind root leaf ?name env diff evmap l v =
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) hyps in
     s ++ fnl () ++
     hv 2 (str "suppose it is (" ++ Id.print ind.mind_consnames.(i) ++ str " " ++
-    prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
-    hyps ++ str "." ++ fnl () ++
-    pr_term true leaf newe (Some ((),c)) [fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)] evmap)
+          prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
+          hyps ++ str "." ++ fnl () ++
+          pr_term true leaf newe (Some ((),c)) [fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)] evmap)
   in
   str "per induction on " ++ str var ++ str "." ++
   CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
@@ -428,6 +428,16 @@ let init_env p =
   let env = Environ.fold_named_context f env82 ~init:env82 in
   {env = env; rename = []; avoid = []}
 
-let pr_tree p t =
-  fnl () ++ v 2 (str "proof." ++ fnl () ++ pr_tree true true (init_env p) t) ++
-  fnl () ++ str "end proof."
+let header_and_footer p body =
+  let (g,_,_,_,sigma) = Proof.proof p in
+  let (g,sigma) = Goal.V82.nf_evar sigma (List.hd g) in
+  let env = Goal.V82.env sigma g in
+  let concl = Printer.pr_goal_concl_style_env env sigma (Goal.V82.concl sigma g) in
+  fnl () ++ str "Goal " ++ concl ++ str "." ++ fnl () ++
+  hv 2 (str "proof." ++ fnl () ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++ str "Qed." ++ fnl ()
+
+let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
+
+let pr_term_all p1 p2 =
+  let (_,_,_,_,e) = Proof.proof p1 in
+  header_and_footer p1 (pr_term true true (init_env p1) (diff_proof p1 p2) [fun _ _ _ _ -> mt ()] e)

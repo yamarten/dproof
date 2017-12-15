@@ -61,18 +61,18 @@ let replay tokens =
   List.rev (List.fold_left List.append [] (f []))
 
 let term = ref false
+let file = ref None
+
 let start () =
   let p2 = Proof_global.give_me_the_proof () in
   let p = Proof_global.freeze `No in
   let s = States.freeze `Yes in
   load ();
   let p1 = Proof_global.give_me_the_proof () in
+  let out = match !file with None -> Feedback.msg_info ?loc:None | Some o -> (fun s -> output_string o (string_of_ppcmds s)) in
   begin
-    if !term then
-      let (_,_,_,_,e) = Proof.proof p1 in
-      let body = pr_term true true (init_env p1) (diff_proof p1 p2) [fun _ _ _ _ -> mt ()] e in
-      Feedback.msg_info (fnl () ++ hv 2 (str "proof." ++ fnl () ++ body) ++ fnl () ++ str "end proof." ++ fnl ())
-    else Feedback.msg_info (pr_tree p1 (prftree (replay (get_tokens ()))) ++ fnl ())
+    if !term then out (pr_term_all p1 p2) else
+    out (pr_tree p1 (prftree (replay (get_tokens ()))) ++ fnl ())
   end;
   Proof_global.unfreeze p; States.unfreeze s
 

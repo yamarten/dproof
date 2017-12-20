@@ -89,6 +89,7 @@ let prftree stream =
   let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
   let warn s v p = Other (warn s v, p) in
   let rec f () =
+    if Stream.peek s = None then End else
     let (p1,v,p2) = Stream.next s in
     if is_bullet v then f () else
     let (g1,b1,_,_,_) = Proof.proof p1 in

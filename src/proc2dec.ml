@@ -136,7 +136,7 @@ let pr_just tac hyps env =
   let hyps = CList.uniquize hyps in
   let by =
     if hyps = [] then mt () else
-      str "by " ++ h 0 (prlist_with_sep pr_comma (fun x->x) hyps) ++ spc ()
+      str "by " ++ (if List.length hyps > 5 then str "*" else h 0 (prlist_with_sep pr_comma (fun x->x) hyps)) ++ spc ()
   in
   h 0 (spc () ++ by ++ str "using " ++ com)
 

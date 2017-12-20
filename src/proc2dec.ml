@@ -217,7 +217,8 @@ let pr_value env evmap term =
 let rec pr_term root leaf ?name env evmap rest term =
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
   if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
-    str "define ___ as " ++ pr_constr env !evmap term ++ str "."
+    let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
+    str "define " ++ Id.print n ++ str " as " ++ pr_constr env !evmap term ++ str "."
   else
   let open Constr in
   match kind term with

@@ -154,22 +154,11 @@ let named_to_rel = function
   | NamedDec.LocalAssum (n,c) -> RelDec.LocalAssum (Name n,c)
   | NamedDec.LocalDef (n,c,t) -> RelDec.LocalDef (Name n,c,t)
 
-let push_rel name typ env =
-  (* TODO: typがenv中に存在するときの処理 *)
-  match name with
-  | Anonymous -> name, {env with env=Termops.push_rel_assum (name,typ) env.env }
-  | Name id ->
-    let newid = Namegen.next_ident_away_in_goal id env.avoid in
-    let newe = Termops.push_rel_assum (Name newid,typ) env.env in
-    let newmap = if id <> newid then (id,newid)::env.rename else env.rename in
-    let newa = newid::env.avoid in
-    Name newid, {env = newe; rename = newmap; avoid = newa;}
-
 let new_name ?term env =
   let rec f env em t = match Constr.kind t with
     | Ind _ | Const _ | Var _ | Rel _ -> string_of_ppcmds (pr_constr env em t)
     | App (c,_) -> f env em c
-    | Prod (n,t,c) -> f env em t ^ f (snd (push_rel n t env)) em c
+    | Prod (n,t,c) -> f env em t ^ f {env with env = Termops.push_rel_assum (n,t) env.env} em c
     | _ -> ""
   in
   let base = match term with
@@ -182,6 +171,19 @@ let new_name ?term env =
   in
   let name = Namegen.next_ident_away_in_goal base env.avoid in
   name, {env with avoid = name::env.avoid}
+
+let push_rel name typ env =
+  (* TODO: typがenv中に存在するときの処理 *)
+  match name with
+  | Anonymous ->
+    let (newid,newe) = new_name env in
+    Name newid, {newe with env=Termops.push_rel_assum (Name newid,typ) env.env }
+  | Name id ->
+    let newid = Namegen.next_ident_away_in_goal id env.avoid in
+    let newe = Termops.push_rel_assum (Name newid,typ) env.env in
+    let newmap = if id <> newid then (id,newid)::env.rename else env.rename in
+    let newa = newid::env.avoid in
+    Name newid, {env = newe; rename = newmap; avoid = newa;}
 
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else

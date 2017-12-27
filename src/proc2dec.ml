@@ -185,6 +185,8 @@ let push_rel name typ env =
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}
 
+let rec get_evar = function Path ((_,Some (e,_),_),_) | Branch ((_,Some (e,_),_),_) -> e | Path (_,n) | Other (_,n) -> get_evar n | _ -> failwith "no evar"
+
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else
     hv 2 (str "claim " ++ pr_name_opt name ++ typ ++ str "." ++ fnl () ++
@@ -231,8 +233,7 @@ let rec pr_term root leaf ?name env evmap rest term =
     def ++ fnl () ++ body
   | Lambda _ -> pr_lambda root leaf ?name env evmap rest term
   | Evar _ ->
-    let f = List.hd !rest in
-    rest := List.tl !rest;
+    let f = List.assoc term rest in
     f root leaf name env
   | App (f,a) -> pr_app root leaf ?name env rest evmap (f,a)
   | Cast (c,_,t) -> pr_term root leaf ?name env evmap rest c
@@ -316,8 +317,7 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   wrap_claim root leaf ?name typ body
 
 let pr_term root leaf ?name env diff rest evmap =
-  if diff = None then List.fold_left (fun s f -> f root leaf name env) (mt ()) rest else
-  let rest = ref rest in
+  if diff = None then List.fold_left (fun s (_,f) -> f root leaf name env) (mt ()) rest else
   let (evar,diff) = Option.get diff in
   let evmap = ref evmap in
   pr_term root leaf ?name env evmap rest diff
@@ -333,7 +333,8 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
   | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root leaf ?name env next(* TODO:simpl対応 *)
   | Some (evar,diffterm) ->
     let (vars,news) = find_vars env.env diffterm in
-    if news <> [] then pr_term root leaf ?name env diff [fun root leaf name env -> pr_tree root leaf ?name env next] e else
+    let n root leaf name env = pr_tree root leaf ?name env next in
+    if news <> [] then pr_term root leaf ?name env diff [(get_evar next, n)] e else
     let next_var = match next with
       | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
       | _ -> None
@@ -357,7 +358,8 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   let (evar,diffterm) = Option.get diff in
   try pr_ind root leaf ?name env diffterm e l v with _ ->
     let (vars,news) = find_vars env.env diffterm in
-    if news <> [] then pr_term root leaf env diff (List.map (fun b root leaf name env -> pr_tree root leaf ?name env b) l) e else
+    let nf b = (get_evar b, fun  root leaf name env -> pr_tree root leaf ?name env b) in
+    if news <> [] then pr_term root leaf env diff (List.map nf l) e else
     let pr_br (s,e,l) b =
       match b with
       | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
@@ -409,11 +411,12 @@ and pr_ind root leaf ?name env diff evmap l v =
       newn::l, newe, h
     in
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) hyps in
+    let nf i = (get_evar (List.nth l i), fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)) in
     s ++ fnl () ++
     hv 2 (str "suppose it is (" ++ Id.print ind.mind_consnames.(i) ++ str " " ++
           prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
           hyps ++ str "." ++ fnl () ++
-          pr_term true leaf newe (Some ((),c)) [fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)] evmap)
+          pr_term true leaf newe (Some ((),c)) [nf i] evmap)
   in
   str "per induction on " ++ str var ++ str "." ++
   CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
@@ -444,4 +447,5 @@ let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 
 let pr_term_all p1 p2 =
   let (_,_,_,_,e) = Proof.proof p1 in
-  header_and_footer p1 (pr_term true true (init_env p1) (diff_proof p1 p2) [fun _ _ _ _ -> mt ()] e)
+  let diff = diff_proof p1 p2 in
+  header_and_footer p1 (pr_term true true (init_env p1) diff [fst (Option.get diff), fun _ _ _ _ -> mt ()] e)

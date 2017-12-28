@@ -187,6 +187,13 @@ let push_rel name typ env =
 
 let rec get_evar = function Path ((_,Some (e,_),_),_) | Branch ((_,Some (e,_),_),_) -> e | Path (_,n) | Other (_,n) -> get_evar n | _ -> failwith "no evar"
 
+let rec search_evar t =
+  let open Constr in
+  match kind t with
+  | Evar _ -> true
+  | Rel _ | Var _ | Meta _ | Sort _ | Const _ | Ind _ | Construct _ -> false
+  | _ -> fold (fun b t -> b && search_evar t) true t
+
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else
     hv 2 (str "claim " ++ pr_name_opt name ++ typ ++ str "." ++ fnl () ++
@@ -212,7 +219,7 @@ let pr_value env evmap term =
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env !evmap term)
   (* | App _ | Lambda _ when n>0 -> *)
   | App _  | Lambda _ | Cast _ | Prod _ -> (* Evarが含まれていると危険 *)
-    if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty
+    if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term)
     then Some (pr_constr env !evmap term)
     else None
   | _ -> None
@@ -220,7 +227,7 @@ let pr_value env evmap term =
 (* TODO:適度な空行 *)
 let rec pr_term root leaf ?name env evmap rest term =
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
-  if Term.is_Set ty_of_ty || Term.is_Type ty_of_ty then
+  if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term) then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
     str "define " ++ Id.print n ++ str " as " ++ pr_constr env !evmap term ++ str "."
   else

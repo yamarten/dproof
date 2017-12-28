@@ -348,8 +348,8 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
     in
     let typ = pr_type env (ref e) diffterm in
     begin match next_var, next=End with
-      | Some var, leaf ->
-        pr_simple root leaf ?name env v (var::vars) typ
+      | Some var, _ ->
+        pr_simple root true ?name env v (var::vars) typ
       | None, true ->
         pr_simple root true ?name env v vars typ
       | None, false ->

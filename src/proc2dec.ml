@@ -5,8 +5,11 @@ module RelDec = Context.Rel.Declaration
 module NamedDec = Context.Named.Declaration
 
 type env = {env:Environ.env; rename:(Id.t*Id.t) list; avoid:Id.t list}
-type prfstep = Vernacexpr.vernac_expr * (Constr.t * Constr.t) option * (Goal.goal list * Evd.evar_map)
-type prftree = End | Path of prfstep * prftree | Branch of prfstep * prftree list | Other of std_ppcmds * prftree
+type prfstep = Vernacexpr.vernac_expr * Constr.t * (Goal.goal list * Evd.evar_map)
+type prftree =
+  | Proof of prfstep * (Constr.existential_key * prftree) list * bool
+  | Warn of std_ppcmds * (Constr.existential_key * prftree) list
+
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
 
 let pr_constr env evmap c =
@@ -15,12 +18,12 @@ let pr_constr env evmap c =
 let pr_type env evmap c = pr_constr env !evmap (Typing.e_type_of env.env evmap c)
 
 let rec diff_term t1 t2 =
-  let open Constr in
+  let open Term in
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
-  if equal t1 t2 then [] else
-  match kind t1, kind t2 with
-  | Evar e1, Evar e2 -> [None]
-  | Evar _, _ -> [ Some (t1,t2) ]
+  if eq_constr t1 t2 then [] else
+  match kind_of_term t1, kind_of_term t2 with
+  | Evar e1, Evar e2 -> []
+  | Evar _, _ -> [fst (destEvar t1),t2]
   | Cast (c1,_,t1), Cast (c2,_,t2) -> diff_term c1 c2 @ diff_term t1 t2
   | Lambda (n,t1,b1), Lambda (_,t2,b2) -> diff_term t1 t2 @ diff_term b1 b2
   | LetIn (n,b1,t1,k1), LetIn (_,b2,t2,k2) -> diff_term t1 t2 @ diff_term b1 b2 @ diff_term k1 k2
@@ -31,13 +34,11 @@ let rec diff_term t1 t2 =
   | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array tl1 tl2 @ f_array bl1 bl2
   | _ -> failwith "proof term changed"
 
-let diff_proof p1 p2 =
-  let evars = List.concat @@ CList.map2 (diff_term) (Proof.partial_proof p1) (Proof.partial_proof p2) in
-  let changes = List.filter Option.has_some evars in
-  let change_num = List.length changes in
-  if change_num = 0 then None else
-  if change_num > (if Option.has_some (List.hd evars) then 1 else 0) then failwith "tail of the goals changed" else
-    List.hd changes
+let diff_proof e p1 p2 =
+  let diffs = List.concat @@ CList.map2 diff_term (Proof.partial_proof p1) (Proof.partial_proof p2) in
+  if List.length diffs = 0 then (e,Term.mkEvar (e,[||])) else
+  if List.length diffs > 1 || fst (List.hd diffs) <> e then failwith "other goals changed" else
+    List.hd diffs
 
 (* TODO: Anonymous時の処理 *)
 let name_to_id = function
@@ -85,32 +86,32 @@ let reset_level, is_bullet =
 
 let prftree stream =
   let s = Stream.of_list stream in
-  let rec sublist l1 l2 = if l1=[] || l1=l2 then true else if l2=[] then false else sublist l1 (List.tl l2) in
-  let sublist l1 l2 = if l1=[] then true else sublist (List.tl l1) l2 in
-  let warn s v p = Other (warn s v, p) in
+  let rec sublist = function
+    | _,[],_ -> true
+    | 0,l1,_::l2 | -1,l1,l2 -> l1 = l2
+    | n, h::t, l2 when n > 0 -> sublist (n-1,t,l2)
+    | _,_,_ -> false
+  in
+  let warn s v p e = [e, Warn (warn s v, p)] in
   let rec f () =
-    if Stream.peek s = None then End else
+    if Stream.peek s = None then [] else
     let (p1,v,p2) = Stream.next s in
     if is_bullet v then f () else
-    let (g1,b1,_,_,_) = Proof.proof p1 in
-    let (g2,b2,_,_,e) = Proof.proof p2 in
+    let (g1,b1,_,_,e1) = Proof.proof p1 in
+    let (g2,b2,_,_,e2) = Proof.proof p2 in
     let n1 = List.length g1 in
     let n2 = List.length g2 in
+    if n1 = 0 then [] else
     try
-      let diff = diff_proof p1 p2 in
-      if n1 = 0 then warn "no goals" v End else
-      let step = (v, diff, (g1,e)) in
-      if n1 < n2 then
-        if sublist g1 g2 then
-          let rec fork n = if n>=0 then f ()::fork (n-1) else [] in
-          Branch (step, List.rev (fork (n2-n1)))
-        else warn "subgoals increase" v (f ())
-      else
-      if List.tl g1 = g2 then Path (step, End) else
-      if List.tl g1 = List.tl g2 then Path (step, f ()) else
-        warn "unsupported" v (f ())
-    with _ -> warn "something happens" v (f ())
-  in f ()
+      let (evar,diff) = diff_proof (List.hd g1) p1 p2 in
+      let step = (v, diff, (g1,e2)) in
+      let eq_env = n2=0 || Environ.eq_named_context_val (Goal.V82.hyps e1 (List.hd g1)) (Goal.V82.hyps e2 (List.hd g2)) in
+      if sublist (n2-n1,List.tl g1,g2) then
+        let rec fork n = if n>=0 then f () @ fork (n-1) else [] in
+        [evar, Proof (step, List.rev (fork (n2-n1)), eq_env)]
+      else warn "unsupported tactic" v (f ()) evar
+    with Failure s -> warn s v [] (Evar.unsafe_of_int 0)
+  in snd (List.hd (f ()))
 
 let replace_name pat str target =
   let open Str in
@@ -185,8 +186,6 @@ let push_rel name typ env =
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}
 
-let rec get_evar = function Path ((_,Some (e,_),_),_) | Branch ((_,Some (e,_),_),_) -> e | Path (_,n) | Other (_,n) -> get_evar n | _ -> failwith "no evar"
-
 let rec search_evar t =
   let open Constr in
   match kind t with
@@ -225,34 +224,34 @@ let pr_value env evmap term =
   | _ -> None
 
 (* TODO:適度な空行 *)
-let rec pr_term root leaf ?name env evmap rest term =
+let rec pr_term_body root leaf ?name env evmap rest term =
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
   if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term) then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
     str "define " ++ Id.print n ++ str " as " ++ pr_constr env !evmap term ++ str "."
   else
-  let open Constr in
-  match kind term with
+  let open Term in
+  match kind_of_term term with
   | LetIn (n,b,t,c) ->
     let (hname,new_env) = push_rel n t env in
-    let def = pr_term false true ~name:hname env evmap rest b in
-    let body = pr_term root leaf ?name new_env evmap rest c in
+    let def = pr_term_body false true ~name:hname env evmap rest b in
+    let body = pr_term_body root leaf ?name new_env evmap rest c in
     def ++ fnl () ++ body
   | Lambda _ -> pr_lambda root leaf ?name env evmap rest term
-  | Evar _ ->
-    let f = List.assoc term rest in
+  | Evar _ -> begin try
+    let f = List.assoc (fst (destEvar term)) rest in
     f root leaf name env
+    with Not_found -> str "(* write your proof *)" end
   | App (f,a) -> pr_app root leaf ?name env rest evmap (f,a)
-  | Cast (c,_,t) -> pr_term root leaf ?name env evmap rest c
+  | Cast (c,_,t) -> pr_term_body root leaf ?name env evmap rest c
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
   | Rel _ | Var _ | Const _ | Construct _ ->
-    if root then
-      let i = match name with
-        | None -> str "thus"
-        | Some n -> str "have " ++ pr_name_opt name
-      in
-      i ++ str " thesis by " ++ pr_constr env !evmap term ++ str "."
-    else mt ()
+    if not root then mt () else
+    let i = match name with
+      | None -> str "thus"
+      | Some n -> str "have " ++ pr_name_opt name
+    in
+    i ++ str " thesis by " ++ pr_constr env !evmap term ++ str "."
   | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
 
 and pr_lambda root leaf ?name env evmap rest term =
@@ -269,7 +268,7 @@ and pr_lambda root leaf ?name env evmap rest term =
   let (decls, new_env) = List.fold_left iter (mt (), env) args in
   let body root name =
     h 2 (str "let " ++ decls ++ str ".") ++ fnl () ++
-    pr_term root true ?name new_env evmap rest c
+    pr_term_body root true ?name new_env evmap rest c
   in
   wrap_claim root leaf ?name typ body
 
@@ -280,7 +279,7 @@ and pr_app root leaf ?name env rest evmap (f,a) =
   let hyps = List.rev hyps in
   let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(Term.mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
   let names = List.rev names in
-  let pr_branch a t n = a ++ pr_term false false ~name:(Name n) env evmap rest t ++ fnl () in
+  let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
   let branches = List.fold_left2 pr_branch (mt ()) hyps names in
   let marge =
     (* TODO:implicitnessをちゃんとする *)
@@ -311,7 +310,7 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
     let con = Name ind.mind_consnames.(n) in
     let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
     let args = List.rev args in
-    let body = pr_term true true env evmap rest br in
+    let body = pr_term_body true true env evmap rest br in
     hv 2 (str "suppose it is (" ++
           prlist_with_sep (fun _ -> str " ") pr_name (con::args) ++
           str ")." ++ fnl () ++ body) ++ fnl ()
@@ -323,53 +322,49 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let typ = pr_type env evmap (Constr.mkCase (ci,t,c,bs)) in
   wrap_claim root leaf ?name typ body
 
-let pr_term root leaf ?name env diff rest evmap =
-  if diff = None then List.fold_left (fun s (_,f) -> f root leaf name env) (mt ()) rest else
-  let (evar,diff) = Option.get diff in
-  let evmap = ref evmap in
-  pr_term root leaf ?name env evmap rest diff
-
 let rec pr_tree root leaf ?name env = function
-  | Path (p,n) -> pr_path root leaf ?name env p n
-  | Branch (p,l) -> pr_branch root ?name leaf env p l
-  | End -> mt ()
-  | Other (s,n) -> s ++ pr_tree root leaf ?name env n
+  | Proof (p,l,false) -> pr_term root leaf ?name env p l
+  | Proof (p,l,true) when List.length l <= 1 -> pr_path root leaf ?name env p l
+  | Proof (p,l,true) -> pr_branch root ?name leaf env p l
+  | Warn (s,l) -> List.fold_left (fun s (_,x) -> s ++ pr_tree root leaf ?name env x) s l
+
+and pr_term root leaf ?name env (_,diff,(_,evmap)) l =
+  let evmap = ref evmap in
+  let f t root leaf name env = pr_tree root leaf ?name env t in
+  let rest = List.map (fun (e,t) -> (e,f t)) l in
+  pr_term_body root leaf ?name env evmap rest diff
+
+and pr_term_simpl root leaf ?name env evmap l diff =
+  let evmap = ref evmap in
+  let f t root leaf name env = pr_tree root leaf ?name env t in
+  let rest = List.map (fun (e,t) -> (e,f t)) l in
+  pr_term_body root leaf ?name env evmap rest diff
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
-  match diff with
-  | None -> warn "nothing happened" v ++ fnl () ++ pr_tree root leaf ?name env next(* TODO:simpl対応 *)
-  | Some (evar,diffterm) ->
-    let (vars,news) = find_vars env.env diffterm in
-    let n root leaf name env = pr_tree root leaf ?name env next in
-    if news <> [] then pr_term root leaf ?name env diff [(get_evar next, n)] e else
-    let next_var = match next with
-      | Path ((_,Some (_,diff),(g,e)),End) -> pr_value env (ref e) diff
-      | _ -> None
-    in
-    let typ = pr_type env (ref e) diffterm in
-    begin match next_var, next=End with
-      | Some var, _ ->
-        pr_simple root true ?name env v (var::vars) typ
-      | None, true ->
-        pr_simple root true ?name env v vars typ
-      | None, false ->
-        let body root name =
-          pr_tree false false env next ++ fnl () ++
-          pr_simple root false ?name env v vars typ
-        in
-        wrap_claim root leaf ?name typ body
-    end
+  let (vars,_) = find_vars env.env diff in
+  let next_var = match next with
+    | [_,Proof ((_,diff,(_,e)),[],_)] -> pr_value env (ref e) diff
+    | _ -> None
+  in
+  let typ = pr_type env (ref e) diff in
+  match next_var, next with
+    | Some var, _ ->
+      pr_simple root true ?name env v (var::vars) typ
+    | None, [] ->
+      pr_simple root true ?name env v vars typ
+    | None, (_,next)::_ ->
+      let body root name =
+        pr_tree false false env next ++ fnl () ++
+        pr_simple root false ?name env v vars typ
+      in
+      wrap_claim root leaf ?name typ body
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
-  if diff = None then warn "nothing happened" v ++ fnl () else
-  let (evar,diffterm) = Option.get diff in
-  try pr_ind root leaf ?name env diffterm e l v with _ ->
-    let (vars,news) = find_vars env.env diffterm in
-    let nf b = (get_evar b, fun  root leaf name env -> pr_tree root leaf ?name env b) in
-    if news <> [] then pr_term root leaf env diff (List.map nf l) e else
-    let pr_br (s,e,l) b =
+  try pr_ind root leaf ?name env diff e l v with _ ->
+    let (vars,_) = find_vars env.env diff in
+    let pr_br (s,e,l) (_,b) =
       match b with
-      | Path ((_,Some (_,d),(_,em)),_) | Branch ((_,Some (_,d),(_,em)),_) ->
+      | Proof ((_,d,(_,em)),_,_) ->
         let (name,newe) = new_name ~term:(d,(ref em)) e in
         let now_avoid = name::env.avoid in
         let next_var = pr_value env (ref em) d in
@@ -382,7 +377,7 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
     in
     let (branches,env,vs) = List.fold_left pr_br (mt (), env, []) l in
     let vars = vars @ (List.rev vs) in
-    let typ = pr_type env (ref e) diffterm in
+    let typ = pr_type env (ref e) diff in
     let body root name =
       branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
     in
@@ -418,12 +413,11 @@ and pr_ind root leaf ?name env diff evmap l v =
       newn::l, newe, h
     in
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) hyps in
-    let nf i = (get_evar (List.nth l i), fun root leaf name env -> pr_tree root leaf ?name env (List.nth l i)) in
     s ++ fnl () ++
     hv 2 (str "suppose it is (" ++ Id.print ind.mind_consnames.(i) ++ str " " ++
           prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
           hyps ++ str "." ++ fnl () ++
-          pr_term true leaf newe (Some ((),c)) [nf i] evmap)
+          pr_term_simpl true leaf newe evmap [List.nth l i] diff)
   in
   str "per induction on " ++ str var ++ str "." ++
   CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
@@ -453,6 +447,6 @@ let header_and_footer p body =
 let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 
 let pr_term_all p1 p2 =
-  let (_,_,_,_,e) = Proof.proof p1 in
-  let diff = diff_proof p1 p2 in
-  header_and_footer p1 (pr_term true true (init_env p1) diff [fst (Option.get diff), fun _ _ _ _ -> mt ()] e)
+  let (g,_,_,_,e) = Proof.proof p1 in
+  let (_,diff) = diff_proof (List.hd g) p1 p2 in
+  header_and_footer p1 (pr_term_simpl true true (init_env p1) e [] diff)

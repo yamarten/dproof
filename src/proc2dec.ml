@@ -314,7 +314,7 @@ and pr_app root leaf ?name env rest evmap (f,a) =
   in
   let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
   let typ = pr_type env evmap (Constr.mkApp (f,a)) in
-  branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ just ++ str ".")
+  branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".")
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in

@@ -350,7 +350,8 @@ let rec pr_tree root leaf ?name env = function
   | Proof (p,l,true) -> pr_branch root ?name leaf env p l
   | Warn (s,l) -> List.fold_left (fun s (_,x) -> s ++ pr_tree root leaf ?name env x) s l
 
-and pr_term root leaf ?name env (_,diff,(_,evmap)) l =
+and pr_term root leaf ?name env (v,diff,(_,evmap)) l =
+  try pr_ind root leaf ?name env diff evmap l v with _ ->
   let f t root leaf name env = pr_tree root leaf ?name env t in
   let rest = List.map (fun (e,t) -> (e,f t)) l in
   pr_term_body root leaf ?name env evmap rest diff
@@ -382,28 +383,27 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
       wrap_claim root leaf ?name typ body
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
-  try pr_ind root leaf ?name env diff e l v with _ ->
-    let (vars,envs) = find_vars env diff in
-    let pr_br (s,e,l) (evar,b) =
-      match b with
-      | Proof ((_,d,(_,em)),_,_) ->
-        let (name,newe) = new_name ~term:(d,em) e in
-        let next_var = pr_value newe em d in
-        if Option.has_some next_var then s,newe, (Option.get next_var)::l else
-        let after_env = let e = List.assoc evar envs in {e with avoid = name::e.avoid} in
-        let body = s ++ pr_tree false false ~name:(Name name) newe b ++ fnl () in
-        body,newe,(Id.print name)::l
-      | _ ->
-        let (name,newe) = new_name e in
-        pr_tree root leaf ~name:(Name name) env b,newe,l
-    in
-    let (branches,_,vs) = List.fold_left pr_br (mt (), env, []) l in
-    let vars = vars @ (List.rev vs) in
-    let typ = pr_type env e diff in
-    let body root name =
-      branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
-    in
-    wrap_claim root leaf ?name typ body
+  let (vars,envs) = find_vars env diff in
+  let pr_br (s,e,l) (evar,b) =
+    match b with
+    | Proof ((_,d,(_,em)),_,_) ->
+      let (name,newe) = new_name ~term:(d,em) e in
+      let next_var = pr_value newe em d in
+      if Option.has_some next_var then s,newe, (Option.get next_var)::l else
+      let after_env = let e = List.assoc evar envs in {e with avoid = name::e.avoid} in
+      let body = s ++ pr_tree false false ~name:(Name name) newe b ++ fnl () in
+      body,newe,(Id.print name)::l
+    | _ ->
+      let (name,newe) = new_name e in
+      pr_tree root leaf ~name:(Name name) env b,newe,l
+  in
+  let (branches,_,vs) = List.fold_left pr_br (mt (), env, []) l in
+  let vars = vars @ (List.rev vs) in
+  let typ = pr_type env e diff in
+  let body root name =
+    branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
+  in
+  wrap_claim root leaf ?name typ body
 
 and pr_ind root leaf ?name env diff evmap l v =
   let open Term in
@@ -439,7 +439,7 @@ and pr_ind root leaf ?name env diff evmap l v =
     hv 2 (str "suppose it is (" ++ Id.print ind.mind_consnames.(i) ++ str " " ++
           prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")" ++
           hyps ++ str "." ++ fnl () ++
-          pr_term_simpl true leaf newe evmap [List.nth l i] diff)
+          pr_term_simpl true leaf newe evmap [List.nth l i] c)
   in
   str "per induction on " ++ str var ++ str "." ++
   CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++

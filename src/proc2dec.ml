@@ -464,8 +464,16 @@ let header_and_footer p body =
   let (g,sigma) = Goal.V82.nf_evar sigma (List.hd g) in
   let env = Goal.V82.env sigma g in
   let concl = Printer.pr_goal_concl_style_env env sigma (Goal.V82.concl sigma g) in
-  fnl () ++ str "Goal " ++ concl ++ str "." ++ fnl () ++
-  hv 2 (str "proof." ++ fnl () ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++ str "Qed." ++ fnl ()
+  let pr_hyp env decl (hyps, lets) =
+    let open Context.Named.Declaration in
+    let id = Id.print (get_id decl) in
+    let typ = Printer.pr_constr_env env sigma (get_type decl) in
+    hyps ++ str "forall " ++ id ++ str ":" ++ typ ++ str ", ",
+    lets ++ str "let " ++ id ++ str ":" ++ typ ++ str "." ++ fnl ()
+  in
+  let (hyps,lets) = Environ.fold_named_context pr_hyp ~init:(mt (), mt ()) env in
+  fnl () ++ str "Goal " ++ hyps ++ concl ++ str "." ++ fnl () ++
+  hv 2 (str "proof." ++ fnl () ++ lets ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++ str "Qed." ++ fnl ()
 
 let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 

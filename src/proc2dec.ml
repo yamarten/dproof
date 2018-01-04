@@ -255,8 +255,8 @@ let rec pr_term_body root leaf ?name env evmap rest term =
   let open Term in
   match kind_of_term term with
   | LetIn (n,b,t,c) ->
-    let (hname,new_env) = push_rel n t env in
-    let def = pr_term_body false true ~name:hname env evmap rest b in
+    let (Name hname,new_env) = push_rel n t env in
+    let def = pr_term_body false true ~name:(Name hname) {env with avoid=hname::env.avoid} evmap rest b in
     let body = pr_term_body root leaf ?name new_env evmap rest c in
     def ++ fnl () ++ body
   | Lambda _ -> pr_lambda root leaf ?name env evmap rest term
@@ -314,7 +314,8 @@ and pr_app root leaf ?name env rest evmap (f,a) =
   in
   let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
   let typ = pr_type env evmap (Constr.mkApp (f,a)) in
-  branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".")
+  let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
+  if hyps = [] || (List.length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in

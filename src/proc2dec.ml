@@ -67,7 +67,6 @@ let pr_name_opt = function
 
 (* 新変数名は以降で使われないことを仮定 *)
 let find_vars env c =
-  let push e n t = {e with env=Termops.push_rel_assum (n,t) e.env} in
   let rec collect i env vars c =
     let open Term in
     match kind_of_term c with
@@ -78,9 +77,12 @@ let find_vars env c =
     | Var n -> (Id.print n)::vars,[]
     | LetIn (n,c,t,b) ->
       let (v1,e1) = collect i env vars c in
-      let (v2,e2) = collect (i+1) (push env n t) v1 b in
+      let env = {env with env=Environ.push_rel (RelDec.LocalDef (n,b,t)) env.env} in
+      let (v2,e2) = collect (i+1) env v1 b in
       v2,e1@e2
-    | Lambda (n,t,c) | Prod (n,t,c) -> collect (i+1) (push env n t) vars c
+    | Lambda (n,t,c) | Prod (n,t,c) ->
+      let env = {env with env=Termops.push_rel_assum (n,t) env.env} in
+      collect (i+1) env vars c
     (* TODO: | Fix _ -> _ *)
     | Case (_,_,c,a) | App (c,a) ->
       let (v,e) = collect i env vars c in
@@ -195,15 +197,21 @@ let new_name ?term env =
   let name = Namegen.next_ident_away_in_goal base env.avoid in
   name, {env with avoid = name::env.avoid}
 
-let push_rel name typ env =
+let push_rel name ?body typ env =
   (* TODO: typがenv中に存在するときの処理 *)
+  let push id =
+    let open RelDec in
+    match body with
+    | None -> Environ.push_rel (LocalAssum (Name id,typ)) env.env
+    | Some b -> Environ.push_rel (LocalDef (Name id,b,typ)) env.env
+  in
   match name with
   | Anonymous ->
     let (newid,newe) = new_name env in
-    Name newid, {newe with env=Termops.push_rel_assum (Name newid,typ) env.env }
+    Name newid, {newe with env=push newid}
   | Name id ->
     let newid = Namegen.next_ident_away_in_goal id env.avoid in
-    let newe = Termops.push_rel_assum (Name newid,typ) env.env in
+    let newe = push newid in
     let newmap = if id <> newid then (id,newid)::env.rename else env.rename in
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}
@@ -255,7 +263,7 @@ let rec pr_term_body root leaf ?name env evmap rest term =
   let open Term in
   match kind_of_term term with
   | LetIn (n,b,t,c) ->
-    let (Name hname,new_env) = push_rel n t env in
+    let (Name hname,new_env) = push_rel n ~body:b t env in
     let def = pr_term_body false true ~name:(Name hname) {env with avoid=hname::env.avoid} evmap rest b in
     let body = pr_term_body root leaf ?name new_env evmap rest c in
     def ++ fnl () ++ body

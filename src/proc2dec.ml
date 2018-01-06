@@ -221,7 +221,7 @@ let rec search_evar t =
   match kind t with
   | Evar _ -> true
   | Rel _ | Var _ | Meta _ | Sort _ | Const _ | Ind _ | Construct _ -> false
-  | _ -> fold (fun b t -> b && search_evar t) true t
+  | _ -> fold (fun b t -> b || search_evar t) false t
 
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else

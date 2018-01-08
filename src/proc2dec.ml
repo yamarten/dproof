@@ -275,12 +275,12 @@ let rec pr_term_body root leaf ?name env evmap rest term =
   | Cast (c,_,t) -> pr_term_body root leaf ?name env evmap rest c
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
   | Rel _ | Var _ | Const _ | Construct _ ->
-    if not root then mt () else
+    if not root && name = None then mt () else
     let i = match name with
       | None -> str "thus"
       | Some n -> str "have " ++ pr_name_opt name
     in
-    i ++ str " thesis by " ++ pr_constr env evmap term ++ str "."
+    i ++ str " " ++ pr_type env evmap term ++ str " by " ++ pr_constr env evmap term ++ str "."
   | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
 
 and pr_lambda root leaf ?name env evmap rest term =

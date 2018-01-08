@@ -418,7 +418,7 @@ and pr_ind root leaf ?name env diff evmap l v =
   let open Term in
   let open Pcoq in
   let open Str in
-  (* TODO:セミコロンでつないでいる場合にも対応すべき？ *)
+  (* TODO:*_indの引数に現れるからタクティック使わなくても大丈夫なのでは *)
   let regvar = regexp "^ *(induction +\\(.*\\)) *$" in
   let com = string_of_ppcmds (Ppvernac.pr_vernac_body v) in
   let var = ignore (string_match regvar com 0); matched_group 1 com in
@@ -431,6 +431,7 @@ and pr_ind root leaf ?name env diff evmap l v =
   let typ_expr = parse_string Constr.constr (matched_group 1 name) in
   let (_,typ) = Constrintern.interp_open_constr env.env !evmap typ_expr in
   let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd typ)) in
+  if Array.length args > 1 + ind.mind_nrealargs + Array.length ind.mind_consnames then failwith "too many args" else
   let brs = Array.sub args (1 + ind.mind_nrealargs) (Array.length ind.mind_consnames) in
   (* caseと共通化できるのでは？ *)
   let pr_branch i s b =

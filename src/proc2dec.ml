@@ -459,13 +459,13 @@ let init_env p =
   reset_level ();
   let (g,_,_,_,e) = Proof.proof p in
   let env82 = Goal.V82.env e (List.hd g) in
-  let f _ d e =
+  let f _ d (l,e) =
     let n = NamedDec.get_id d in
     let t = NamedDec.get_type d in
-    Environ.push_rel (RelDec.LocalAssum (Name n,t)) e
+    n::l, Environ.push_rel (RelDec.LocalAssum (Name n,t)) e
   in
-  let env = Environ.fold_named_context f env82 ~init:env82 in
-  {env = env; rename = []; avoid = []}
+  let (l,env) = Environ.fold_named_context f env82 ~init:([],env82) in
+  {env = env; rename = []; avoid = l}
 
 let header_and_footer p body =
   let (g,_,_,_,sigma) = Proof.proof p in

@@ -73,8 +73,7 @@ let find_vars env c =
     | Rel j ->
       if j <= i then vars,[] else
         (pr_name (RelDec.get_name (Environ.lookup_rel j env.env)))::vars,[]
-    | Const (c,_) -> (Constant.print c)::vars,[]
-    | Var n -> (Id.print n)::vars,[]
+    | Const _ | Var _ -> (Printer.pr_lconstr c)::vars,[]
     | LetIn (n,c,t,b) ->
       let (v1,e1) = collect i env vars c in
       let env = {env with env=Environ.push_rel (RelDec.LocalDef (n,b,t)) env.env} in

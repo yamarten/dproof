@@ -388,7 +388,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
       pr_tree false false after_env next ++ fnl () ++
       pr_simple root false ?name env v vars typ
     in
-    wrap_claim root leaf ?name typ body
+    wrap_claim root true ?name typ body
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   let (vars,envs) = find_vars env diff in

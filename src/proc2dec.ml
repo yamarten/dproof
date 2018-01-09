@@ -430,7 +430,7 @@ and pr_ind root leaf ?name env diff evmap l v =
   let typ_expr = parse_string Constr.constr (matched_group 1 name) in
   let (_,typ) = Constrintern.interp_open_constr env.env !evmap typ_expr in
   let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd typ)) in
-  if Array.length args > 1 + ind.mind_nrealargs + Array.length ind.mind_consnames then failwith "too many args" else
+  if Array.length args > 2 + ind.mind_nrealargs + Array.length ind.mind_consnames then failwith "too many args" else
   let brs = Array.sub args (1 + ind.mind_nrealargs) (Array.length ind.mind_consnames) in
   (* caseと共通化できるのでは？ *)
   let pr_branch i s b =

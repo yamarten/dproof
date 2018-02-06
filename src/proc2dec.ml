@@ -363,12 +363,12 @@ and pr_term root leaf ?name env (v,diff,(_,evmap)) l =
   try pr_ind root leaf ?name env diff evmap l v with _ ->
     let f t root leaf name env = pr_tree root leaf ?name env t in
     let rest = List.map (fun (e,t) -> (e,f t)) l in
-    pr_term_body root leaf ?name env evmap rest diff
+    pr_term_body root leaf ?name env evmap rest (Reduction.nf_betaiota env.env diff)
 
 and pr_term_simpl root leaf ?name env evmap l diff =
   let f t root leaf name env = pr_tree root leaf ?name env t in
   let rest = List.map (fun (e,t) -> (e,f t)) l in
-  pr_term_body root leaf ?name env evmap rest diff
+  pr_term_body root leaf ?name env evmap rest (Reduction.nf_betaiota env.env diff)
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
   let (vars,envs) = find_vars env diff in

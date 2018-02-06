@@ -15,7 +15,7 @@ let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *
 let pr_constr env evmap c =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env !evmap c)
 
-let pr_type env evmap c = let t = Typing.e_type_of env.env evmap c in pr_constr env evmap (Reduction.whd_all env.env t)
+let pr_type env evmap c = let t = Typing.e_type_of env.env evmap c in (pr_constr env evmap (Reduction.nf_betaiota env.env t))
 
 let rec diff_term t1 t2 =
   let open Term in

@@ -160,7 +160,6 @@ let replace_name pat str target =
 let pr_just tac hyps env =
   let com = Ppvernac.pr_vernac_body tac in
   let com = List.fold_left (fun com (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) com) com env.rename in
-  let hyps = List.map (fun v -> List.fold_left (fun v (oldn,newn) -> replace_name (Id.print oldn) (Id.print newn) v) v env.rename) hyps in
   let hyps = CList.uniquize hyps in
   let by =
     if hyps = [] then mt () else

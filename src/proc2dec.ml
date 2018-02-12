@@ -15,7 +15,11 @@ let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *
 let pr_constr env evmap c =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env !evmap c)
 
-let pr_type env evmap c = let t = Typing.e_type_of env.env evmap c in (pr_constr env evmap (Reduction.nf_betaiota env.env t))
+let pr_type ?typ env evmap c = match typ with
+  | None ->
+    let t = Typing.e_type_of env.env evmap c in
+    (pr_constr env evmap (Reduction.nf_betaiota env.env t))
+  | Some t -> pr_constr env evmap t
 
 let rec diff_term t1 t2 =
   let open Term in
@@ -253,7 +257,7 @@ let pr_value env evmap term =
   | _ -> None
 
 (* TODO:適度な空行 *)
-let rec pr_term_body root leaf ?name env evmap rest term =
+let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
   if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term) then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
@@ -264,16 +268,16 @@ let rec pr_term_body root leaf ?name env evmap rest term =
   match kind_of_term term with
   | LetIn (n,b,t,c) ->
     let (Name hname,new_env) = push_rel n ~body:b t env in
-    let def = pr_term_body false true ~name:(Name hname) {env with avoid=hname::env.avoid} evmap rest b in
-    let body = pr_term_body root leaf ?name new_env evmap rest c in
+    let def = pr_term_body false true ~name:(Name hname) ~typ:t {env with avoid=hname::env.avoid} evmap rest b in
+    let body = pr_term_body root leaf ?name ?typ new_env evmap rest c in
     def ++ fnl () ++ body
-  | Lambda _ -> pr_lambda root leaf ?name env evmap rest term
+  | Lambda _ -> pr_lambda root leaf ?name ?typ env evmap rest term
   | Evar _ -> begin try
-        let f = List.assoc (fst (destEvar term)) rest in
-        f root leaf name env
-      with Not_found -> str "(* write your proof *)" end
-  | App (f,a) -> pr_app root leaf ?name env rest evmap (f,a)
-  | Cast (c,_,t) -> pr_term_body root leaf ?name env evmap rest c
+    let f = List.assoc (fst (destEvar term)) rest in
+    f root leaf name env
+    with Not_found -> str "(* write your proof *)" end
+  | App (f,a) -> pr_app root leaf ?name ?typ env rest evmap (f,a)
+  | Cast (c,_,typ) -> pr_term_body root leaf ?name ~typ env evmap rest c
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
   | Rel _ | Var _ | Const _ | Construct _ ->
     if not root && name = None then mt () else
@@ -281,11 +285,11 @@ let rec pr_term_body root leaf ?name env evmap rest term =
       | None -> str "thus"
       | Some n -> str "have " ++ pr_name_opt name
     in
-    i ++ str " " ++ pr_type env evmap term ++ str " by " ++ pr_constr env evmap term ++ str "."
+    i ++ str " " ++ pr_type ?typ env evmap term ++ str " by " ++ pr_constr env evmap term ++ str "."
   | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
 
-and pr_lambda root leaf ?name env evmap rest term =
-  let typ = pr_type env evmap term in
+and pr_lambda root leaf ?name ?typ env evmap rest term =
+  let typ = pr_type ?typ env evmap term in
   (* decompose_lam_nにすべき？ *)
   let (args,c) = Term.decompose_lam term in
   let args = List.rev args in
@@ -302,7 +306,7 @@ and pr_lambda root leaf ?name env evmap rest term =
   in
   wrap_claim root leaf ?name typ body
 
-and pr_app root leaf ?name env rest evmap (f,a) =
+and pr_app root leaf ?name ?typ env rest evmap (f,a) =
   try pr_ind root leaf ?name env rest evmap (f,a) with _ ->
   let args = (f :: Array.to_list a) in
   let args_v = List.map (pr_value env evmap) args in
@@ -322,7 +326,7 @@ and pr_app root leaf ?name env rest evmap (f,a) =
     List.rev (fst (List.fold_left f ([],0) args_v))
   in
   let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-  let typ = pr_type env evmap (Constr.mkApp (f,a)) in
+  let typ = pr_type ?typ env evmap (Constr.mkApp (f,a)) in
   let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
   if hyps = [] || (List.length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
 
@@ -399,16 +403,34 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let typ = pr_type env evmap (Constr.mkCase (ci,t,c,bs)) in
   wrap_claim root leaf ?name typ body
 
+let concl env g e =
+  let open Term in
+  let a = ref env.avoid in
+  let rec f x = match kind_of_term x with
+    | LetIn (n,b,t,k) ->
+      let n = Namegen.next_name_away n !a in
+      a := n::!a;
+      map_constr f (mkLetIn (Name n,b,t,k))
+    | Lambda (n,t,b) ->
+      let n = Namegen.next_name_away n !a in
+      a := n::!a;
+      map_constr f (mkLambda (Name n,t,b))
+    | Var n -> begin try mkVar (List.assoc n env.rename) with Not_found -> x end
+    | _ -> map_constr f x
+  in
+  f (Goal.V82.concl e (List.hd g))
+
 let rec pr_tree root leaf ?name env = function
-  | Proof (p,l,false) -> let (_,d,(_,e)) = p in pr_term root leaf ?name env e d l
+  | Proof (p,l,false) -> let (_,d,(g,e)) = p in pr_term root leaf ?name env g e d l
   | Proof (p,l,true) when List.length l <= 1 -> pr_path root leaf ?name env p l
   | Proof (p,l,true) -> pr_branch root ?name leaf env p l
   | Warn (s,l) -> List.fold_left (fun s (_,x) -> s ++ pr_tree root leaf ?name env x) s l
 
-and pr_term root leaf ?name env evmap diff l =
+and pr_term root leaf ?name env g evmap diff l =
   let f t root leaf name env = pr_tree root leaf ?name env t in
   let rest = List.map (fun (e,t) -> (e,f t)) l in
-  pr_term_body root leaf ?name env evmap rest (Reduction.nf_betaiota env.env diff)
+  let typ = concl env g !evmap in
+  pr_term_body root leaf ?name ~typ env evmap rest (Reduction.nf_betaiota env.env diff)
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
   let (vars,envs) = find_vars env diff in
@@ -418,7 +440,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
     | _ -> None
   in
   let open Evd in
-  let typ = pr_type env e diff in
+  let typ = pr_constr env e (concl env g !e) in
   match next_var, next with
   | Some var, _ ->
     pr_simple root true ?name env v (var::vars) typ
@@ -448,7 +470,7 @@ and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   in
   let (branches,_,vs) = List.fold_left pr_br (mt (), [], []) l in
   let vars = vars @ (List.rev vs) in
-  let typ = pr_type env e diff in
+  let typ = pr_constr env e (concl env g !e) in
   let body root name =
     branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
   in
@@ -488,4 +510,4 @@ let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 let pr_term_all p1 p2 =
   let (g,_,_,_,e) = Proof.proof p1 in
   let (_,diff) = diff_proof (List.hd g) p1 p2 in
-  header_and_footer p1 (pr_term true true (init_env p1) (ref e) diff [])
+  header_and_footer p1 (pr_term true true (init_env p1) g (ref e) diff [])

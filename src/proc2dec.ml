@@ -308,7 +308,7 @@ and pr_lambda root leaf ?name ?typ env evmap rest term =
 and pr_app root leaf ?name ?typ env rest evmap diff =
   let open Term in
   let open List in
-  try pr_ind root leaf ?name env rest evmap diff with _ ->
+  try pr_ind root leaf ?name ?typ env rest evmap diff with _ ->
   let (f,a) = destApp diff in
   let simpl = Reduction.whd_betaiota env.env diff in
   if not (eq_constr diff simpl) && not (search_evar f) then pr_term_body root leaf ?name ?typ env evmap rest simpl else
@@ -330,23 +330,23 @@ and pr_app root leaf ?name ?typ env rest evmap diff =
     rev (fst (fold_left f ([],0) args_v))
   in
   let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-  let typ = pr_type ?typ env evmap (mkApp (f,a)) in
+  let typ = pr_type ?typ env evmap diff in
   let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
   if hyps = [] || (length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
 
-and pr_ind root leaf ?name env rest evmap diff =
+and pr_ind root leaf ?name ?typ env rest evmap diff =
   let open Term in
   let open Pcoq in
   let open Str in
   let (f,args) = destApp diff in
   let (c,_) = destConst f in
-  let name = Constant.to_string c in
+  let tname = Constant.to_string c in
   let regind = regexp "^\\(.+\\)_\\(ind\\|rec\\|rect\\)$" in
-  if string_match regind name 0 = false then failwith "not induction" else
+  if string_match regind tname 0 = false then failwith "not induction" else
   (* *_indの第1（ではないかもしれない）引数から抜くべき？ *)
-  let typ_expr = parse_string Constr.constr (matched_group 1 name) in
-  let (_,typ) = Constrintern.interp_open_constr env.env !evmap typ_expr in
-  let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd typ)) in
+  let typ_expr = parse_string Constr.constr (matched_group 1 tname) in
+  let (_,ttyp) = Constrintern.interp_open_constr env.env !evmap typ_expr in
+  let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd ttyp)) in
   let arity = Context.Rel.length ind.mind_arity_ctxt in
   if Array.length args <> 2 + arity + Array.length ind.mind_consnames then failwith "too many args" else
   let var = pr_constr env evmap (CArray.last args) in
@@ -374,11 +374,15 @@ and pr_ind root leaf ?name env rest evmap diff =
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) (List.rev hyps) in
     s ++ fnl () ++
     hv 2 (str "suppose it is " ++ pat ++ hyps ++ str "." ++ fnl () ++
-          pr_term_body true leaf newe evmap rest c)
+          pr_term_body true false newe evmap rest c)
   in
-  str "per induction on " ++ var ++ str "." ++
-  CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
-  str "end induction."
+  let typ = pr_type ?typ env evmap diff in
+  let body _ _ =
+    str "per induction on " ++ var ++ str "." ++
+    CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
+    str "end induction."
+  in
+  wrap_claim root leaf ?name typ body
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in

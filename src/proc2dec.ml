@@ -276,7 +276,7 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
     let f = List.assoc (fst (destEvar term)) rest in
     f root leaf name env
     with Not_found -> str "(* write your proof *)" end
-  | App (f,a) -> pr_app root leaf ?name ?typ env rest evmap (f,a)
+  | App _ -> pr_app root leaf ?name ?typ env rest evmap term
   | Cast (c,_,typ) -> pr_term_body root leaf ?name ~typ env evmap rest c
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
   | Rel _ | Var _ | Const _ | Construct _ ->
@@ -306,34 +306,40 @@ and pr_lambda root leaf ?name ?typ env evmap rest term =
   in
   wrap_claim root leaf ?name typ body
 
-and pr_app root leaf ?name ?typ env rest evmap (f,a) =
-  try pr_ind root leaf ?name env rest evmap (f,a) with _ ->
+and pr_app root leaf ?name ?typ env rest evmap diff =
+  let open Term in
+  let open List in
+  try pr_ind root leaf ?name env rest evmap diff with _ ->
+  let (f,a) = destApp diff in
+  let simpl = Reduction.whd_betaiota env.env diff in
+  if not (eq_constr diff simpl) && not (search_evar f) then pr_term_body root leaf ?name ?typ env evmap rest simpl else
   let args = (f :: Array.to_list a) in
-  let args_v = List.map (pr_value env evmap) args in
-  let hyps = List.fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
-  let hyps = List.rev hyps in
-  let (names,env) = List.fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(Term.mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
-  let names = List.rev names in
+  let args_v = map (pr_value env evmap) args in
+  let hyps = fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
+  let hyps = rev hyps in
+  let (names,env) = fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
+  let names = rev names in
   let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
-  let branches = List.fold_left2 pr_branch (mt ()) hyps names in
+  let branches = fold_left2 pr_branch (mt ()) hyps names in
   let marge =
     (* TODO:implicitnessをちゃんとする *)
-    let args_v = match List.hd (args_v) with
-      | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(List.tl args_v)
+    let args_v = match hd (args_v) with
+      | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(tl args_v)
       | _ -> args_v
     in
-    let f (s,i) = function Some x -> x::s,i | None -> Id.print (List.nth names i)::s, i+1 in
-    List.rev (fst (List.fold_left f ([],0) args_v))
+    let f (s,i) = function Some x -> x::s,i | None -> Id.print (nth names i)::s, i+1 in
+    rev (fst (fold_left f ([],0) args_v))
   in
   let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-  let typ = pr_type ?typ env evmap (Constr.mkApp (f,a)) in
+  let typ = pr_type ?typ env evmap (mkApp (f,a)) in
   let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
-  if hyps = [] || (List.length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
+  if hyps = [] || (length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
 
-and pr_ind root leaf ?name env rest evmap (f,args) =
+and pr_ind root leaf ?name env rest evmap diff =
   let open Term in
   let open Pcoq in
   let open Str in
+  let (f,args) = destApp diff in
   let (c,_) = destConst f in
   let name = Constant.to_string c in
   let regind = regexp "^\\(.+\\)_\\(ind\\|rec\\|rect\\)$" in
@@ -430,7 +436,7 @@ and pr_term root leaf ?name env g evmap diff l =
   let f t root leaf name env = pr_tree root leaf ?name env t in
   let rest = List.map (fun (e,t) -> (e,f t)) l in
   let typ = concl env g !evmap in
-  pr_term_body root leaf ?name ~typ env evmap rest (Reduction.nf_betaiota env.env diff)
+  pr_term_body root leaf ?name ~typ env evmap rest diff
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
   let (vars,envs) = find_vars env diff in
@@ -510,4 +516,5 @@ let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 let pr_term_all p1 p2 =
   let (g,_,_,_,e) = Proof.proof p1 in
   let (_,diff) = diff_proof (List.hd g) p1 p2 in
+  let diff = Reduction.nf_betaiota (Goal.V82.env e (List.hd g)) diff in
   header_and_footer p1 (pr_term true true (init_env p1) g (ref e) diff [])

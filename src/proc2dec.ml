@@ -260,8 +260,10 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
   if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term) then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
-    str "define " ++ Id.print n ++ str " as " ++ pr_constr env evmap term ++ str "." ++
-    (if root then fnl () ++ str "hence thesis." else mt ())
+    let ppterm = pr_constr env evmap term in
+    begin if root
+    then str "thus thesis by" ++ spc () ++ ppterm ++ str "."
+    else str "define " ++ Id.print n ++ str " as" ++ spc () ++ ppterm ++ str "." end
   else
   let open Term in
   match kind_of_term term with

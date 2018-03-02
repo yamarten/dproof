@@ -132,7 +132,7 @@ and pr_app root leaf ?name ?typ env rest evmap diff =
     let args_v = map (pr_value env evmap) args in
     let hyps = fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
     let hyps = rev hyps in
-    let (names,env) = fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
+    let (names,env) = fold_left (fun (ns,e) t ->let (n,e) = new_name ~term:(t,evmap) e in n::ns,e) ([],env) hyps in
     let names = rev names in
     let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
     let branches = fold_left2 pr_branch (mt ()) hyps names in

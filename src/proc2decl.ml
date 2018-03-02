@@ -76,8 +76,8 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
     let ppterm = pr_constr env evmap term in
     begin if root
-    then str "thus thesis by" ++ spc () ++ ppterm ++ str "."
-    else str "define " ++ Id.print n ++ str " as" ++ spc () ++ ppterm ++ str "." end
+      then str "thus thesis by" ++ spc () ++ ppterm ++ str "."
+      else str "define " ++ Id.print n ++ str " as" ++ spc () ++ ppterm ++ str "." end
   else
   let open Term in
   match kind_of_term term with
@@ -88,9 +88,9 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
     def ++ fnl () ++ body
   | Lambda _ -> pr_lambda root leaf ?name ?typ env evmap rest term
   | Evar _ -> begin try
-    let f = List.assoc (fst (destEvar term)) rest in
-    f root leaf name env
-    with Not_found -> str "(* write your proof *)" end
+        let f = List.assoc (fst (destEvar term)) rest in
+        f root leaf name env
+      with Not_found -> str "(* write your proof *)" end
   | App _ -> pr_app root leaf ?name ?typ env rest evmap term
   | Cast (c,_,typ) -> pr_term_body root leaf ?name ~typ env evmap rest c
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
@@ -125,30 +125,30 @@ and pr_app root leaf ?name ?typ env rest evmap diff =
   let open Term in
   let open List in
   try pr_ind root leaf ?name ?typ env rest evmap diff with _ ->
-  let (f,a) = destApp diff in
-  let simpl = Reduction.whd_betaiota env.env diff in
-  if not (eq_constr diff simpl) && not (search_evar f) then pr_term_body root leaf ?name ?typ env evmap rest simpl else
-  let args = (f :: Array.to_list a) in
-  let args_v = map (pr_value env evmap) args in
-  let hyps = fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
-  let hyps = rev hyps in
-  let (names,env) = fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
-  let names = rev names in
-  let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
-  let branches = fold_left2 pr_branch (mt ()) hyps names in
-  let marge =
-    (* TODO:implicitnessをちゃんとする *)
-    let args_v = match hd (args_v) with
-      | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(tl args_v)
-      | _ -> args_v
+    let (f,a) = destApp diff in
+    let simpl = Reduction.whd_betaiota env.env diff in
+    if not (eq_constr diff simpl) && not (search_evar f) then pr_term_body root leaf ?name ?typ env evmap rest simpl else
+    let args = (f :: Array.to_list a) in
+    let args_v = map (pr_value env evmap) args in
+    let hyps = fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
+    let hyps = rev hyps in
+    let (names,env) = fold_left (fun (ns,e) _ ->let (n,e) = new_name ~term:(mkApp (f,a),evmap) e in n::ns,e) ([],env) hyps in
+    let names = rev names in
+    let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
+    let branches = fold_left2 pr_branch (mt ()) hyps names in
+    let marge =
+      (* TODO:implicitnessをちゃんとする *)
+      let args_v = match hd (args_v) with
+        | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(tl args_v)
+        | _ -> args_v
+      in
+      let f (s,i) = function Some x -> x::s,i | None -> Id.print (nth names i)::s, i+1 in
+      rev (fst (fold_left f ([],0) args_v))
     in
-    let f (s,i) = function Some x -> x::s,i | None -> Id.print (nth names i)::s, i+1 in
-    rev (fst (fold_left f ([],0) args_v))
-  in
-  let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
-  let typ = pr_type ?typ env evmap diff in
-  let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
-  if hyps = [] || (length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
+    let just = str " by (" ++ prlist_with_sep (fun _->str " ") (fun x->x) marge ++ str ")" in
+    let typ = pr_type ?typ env evmap diff in
+    let body root name = branches ++ hv 2 (pr_instr root (leaf || hyps=[]) ++ pr_name_opt name ++ typ ++ just ++ str ".") in
+    if hyps = [] || (length hyps = 1 && root) then body root name else wrap_claim root leaf ?name typ body
 
 and pr_ind root leaf ?name ?typ env rest evmap diff =
   let open Term in
@@ -185,7 +185,7 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
     let pat =
       let cons = Id.print ind.mind_consnames.(i) in
       if args = [] then cons else
-      str "(" ++ cons ++ str " " ++ prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")"
+        str "(" ++ cons ++ str " " ++ prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")"
     in
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) (List.rev hyps) in
     s ++ fnl () ++
@@ -289,14 +289,21 @@ let header_and_footer p body =
   let (g,sigma) = Goal.V82.nf_evar sigma (List.hd g) in
   let env = Goal.V82.env sigma g in
   let concl = Printer.pr_goal_concl_style_env env sigma (Goal.V82.concl sigma g) in
-  let pr_hyp env decl (hyps, lets) =
+  let pr_hyp env decl params =
     let open Context.Named.Declaration in
     let id = Id.print (get_id decl) in
     let typ = Printer.pr_constr_env env sigma (get_type decl) in
-    hyps ++ str "forall " ++ id ++ str ":" ++ typ ++ str ", ",
-    lets ++ str "let " ++ id ++ str ":" ++ typ ++ str "." ++ fnl ()
+    id ++ str ":" ++ typ :: params
   in
-  let (hyps,lets) = Environ.fold_named_context pr_hyp ~init:(mt (), mt ()) env in
+  let params = List.rev (Environ.fold_named_context pr_hyp ~init:[] env) in
+  let hyps = match params with
+    | [] -> mt ()
+    | _ -> str "forall " ++ prlist_with_sep (fun _ -> str " ") surround params ++ str "," ++ spc ()
+  in
+  let lets = match params with
+    | [] -> mt ()
+    | _ -> str "let " ++ prlist_with_sep (fun _ -> str "," ++ spc ()) (fun x -> x) params ++ str "." ++ fnl ()
+  in
   fnl () ++ str "Goal " ++ hyps ++ concl ++ str "." ++ fnl () ++
   hv 2 (str "proof." ++ fnl () ++ lets ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++ str "Qed." ++ fnl ()
 

@@ -1,4 +1,5 @@
-src/proc2dec.ml
+src/dutil.ml
+src/proc2decl.ml
 src/reproof.ml
 src/dproof.ml4
 src/dproof.mllib

@@ -1,5 +1,6 @@
 open Pp
 open Reproof
+open Dutil
 open Constrarg
 open Stdarg
 

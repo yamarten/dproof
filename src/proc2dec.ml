@@ -376,7 +376,7 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) (List.rev hyps) in
     s ++ fnl () ++
     hv 2 (str "suppose it is " ++ pat ++ hyps ++ str "." ++ fnl () ++
-          pr_term_body true false newe evmap rest c)
+          pr_term_body true true newe evmap rest c)
   in
   let typ = pr_type ?typ env evmap diff in
   let body _ _ =
@@ -384,7 +384,7 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
     CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
     str "end induction."
   in
-  wrap_claim root leaf ?name typ body
+  wrap_claim false root ?name typ body
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in

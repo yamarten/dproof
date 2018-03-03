@@ -140,14 +140,13 @@ let diff_proof e p1 p2 =
     List.hd diffs
 
 (* 新変数名は以降で使われないことを仮定 *)
-let find_vars env c =
+let find_vars env evmap c =
   let rec collect i env vars c =
     let open Term in
     match kind_of_term c with
     | Rel j ->
       if j <= i then vars,[] else
         (pr_name (RelDec.get_name (Environ.lookup_rel j env.env)))::vars,[]
-    | Const _ | Var _ -> (Printer.pr_lconstr c)::vars,[]
     | LetIn (n,c,t,b) ->
       let (v1,e1) = collect i env vars c in
       let env = {env with env=Environ.push_rel (RelDec.LocalDef (n,b,t)) env.env} in
@@ -160,7 +159,9 @@ let find_vars env c =
     | Case (_,_,c,a) | App (c,a) ->
       let (v,e) = collect i env vars c in
       let f (v,e) c = let (v',e') = collect i env v c in v',e'@e in
-      Array.fold_left f (v,e) a
+      let (v,e) = Array.fold_left f (v,e) a in
+      (* 危険かもしれない *)
+      if isSort (Typing.e_type_of env.env evmap c) then ([],e) else (v,e)
     | Cast (c,_,_) -> collect i env vars c
     | Evar _ -> vars,[fst (destEvar c),env]
     | _ -> vars,[]

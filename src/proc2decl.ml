@@ -238,7 +238,7 @@ and pr_term root leaf ?name env g evmap diff l =
   pr_term_body root leaf ?name ~typ env evmap rest diff
 
 and pr_path root leaf ?name env (v,diff,(g,e)) next =
-  let (vars,envs) = find_vars env diff in
+  let (vars,envs) = find_vars env e diff in
   let after_env = match next with [e,_] -> List.assoc e envs | _ -> env in
   let next_var = match next with
     | [_,Proof ((_,diff,(_,e)),[],_)] -> pr_value after_env e diff
@@ -259,7 +259,7 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
     wrap_claim root true ?name typ body
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
-  let (vars,envs) = find_vars env diff in
+  let (vars,envs) = find_vars env e diff in
   let pr_br (s,a,l) (evar,b) =
     match b with
     | Proof ((_,d,(_,em)),_,_) ->

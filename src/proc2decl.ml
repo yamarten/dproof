@@ -183,9 +183,10 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
       newn::l, newe, h
     in
     let pat =
-      let cons = Id.print ind.mind_consnames.(i) in
-      if args = [] then cons else
-        str "(" ++ cons ++ str " " ++ prlist_with_sep (fun _ -> str " ") pr_name (List.rev args) ++ str ")"
+      let ps = CList.make (cons_params_num env (fst (destInd ttyp)) i) (Name (Id.of_string_soft "_")) in
+      let cons = Name ind.mind_consnames.(i) in
+      if args = [] then pr_name cons else
+        str "(" ++ prlist_with_sep (fun _ -> str " ") pr_name (cons :: ps @ List.rev args) ++ str ")"
     in
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) (List.rev hyps) in
     s ++ fnl () ++
@@ -201,25 +202,21 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
   wrap_claim false root ?name typ body
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
-  let ind = let (mi,i) = ci.ci_ind in (Environ.lookup_mind mi env.env).mind_packets.(i) in
-  let remove_lam n c =
-    let rec f n c a e =
-      if n=0 then a,e,c else
-      match Constr.kind c with
-      | Lambda (x,t,c) ->
-        let (newx,newe) = push_rel x t e in
-        f (n-1) c (newx::a) newe
-      | _ -> a,e,c
-    in f n c [] env
-  in
+  let (_,ind) = Inductive.lookup_mind_specif env.env ci.ci_ind in
   let pr_br n c =
-    let con = Name ind.mind_consnames.(n) in
-    let (args,env,br) = remove_lam ind.mind_consnrealargs.(n) c in
+    let cons = Name ind.mind_consnames.(n) in
+    let (args,br) = Term.decompose_lam_n ind.mind_consnrealargs.(n) c in
+    let (args,env) =
+      List.fold_right (fun (x,t) (l,e) -> let (x,e) = push_rel x t e in x::l, e) args ([],env)
+    in
     let args = List.rev args in
     let body = pr_term_body true true env evmap rest br in
-    hv 2 (str "suppose it is (" ++
-          prlist_with_sep (fun _ -> str " ") pr_name (con::args) ++
-          str ")." ++ fnl () ++ body) ++ fnl ()
+    let pat =
+      let ps = CList.make (cons_params_num env ci.ci_ind n) (Name (Id.of_string_soft "_")) in
+      if args = [] then pr_name cons else
+        str "(" ++ prlist_with_sep (fun _ -> str " ") pr_name (cons :: ps @ args) ++ str ")"
+    in
+    hv 2 (str "suppose it is " ++ pat ++ str "." ++ fnl () ++ body) ++ fnl ()
   in
   let body _ _ =
     str "per cases on " ++ pr_constr env evmap c ++ str "." ++ fnl () ++

@@ -179,3 +179,12 @@ let init_env p =
   in
   let (l,env) = Environ.fold_named_context f env82 ~init:([],env82) in
   {env = env; rename = []; avoid = l}
+
+let cons_params_num env ind cnum =
+  let open Impargs in
+  let open List in
+  let (_,mi) = Inductive.lookup_mind_specif env.env ind in
+  (* implicits_of_globalがリストになるのが謎 *)
+  let imp = positions_of_implicits (hd (implicits_of_global (Globnames.ConstructRef (ind,cnum+1)))) in
+  let paramn = Context.Rel.length mi.mind_arity_ctxt in
+  paramn - length (filter (fun x -> x <= paramn) imp)

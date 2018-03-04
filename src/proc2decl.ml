@@ -205,12 +205,31 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let (_,ind) = Inductive.lookup_mind_specif env.env ci.ci_ind in
   let pr_br n c =
     let cons = Name ind.mind_consnames.(n) in
-    let (args,br) = Term.decompose_lam_n ind.mind_consnrealargs.(n) c in
+    let (args,br) = Term.decompose_lam c in
+    let argdiff = List.length args - ind.mind_consnrealargs.(n) in
+    let (args,br) = if argdiff <= 0 then (args,br) else
+        let (ex,args) = CList.chop argdiff args in
+        (args, Term.compose_lam ex br)
+    in
     let (args,env) =
       List.fold_right (fun (x,t) (l,e) -> let (x,e) = push_rel x t e in x::l, e) args ([],env)
     in
-    let args = List.rev args in
-    let body = pr_term_body true true env evmap rest br in
+    let (vs,env) = if argdiff >= 0 then ([],env) else
+      let rec f e n =
+        if n >= 0 then [],e else
+        let (v,e) = new_name e in
+        let (vs,e) = f e (n+1) in
+        (Name v :: vs, e)
+      in
+      f env argdiff
+    in
+    let args = List.rev args @ vs in
+    let body = pr_term_body (argdiff >= 0) true env evmap rest br in
+    let body = if argdiff >= 0 then body else
+      hv 2 (str "claim " ++ pr_type env evmap br ++ str "." ++ fnl () ++ body) ++ fnl () ++
+      str "end claim." ++ fnl () ++
+      str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
+    in
     let pat =
       let ps = CList.make (cons_params_num env ci.ci_ind n) (Name (Id.of_string_soft "_")) in
       if args = [] then pr_name cons else

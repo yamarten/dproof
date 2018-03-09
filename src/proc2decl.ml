@@ -69,17 +69,51 @@ let pr_value env evmap term =
     else None
   | _ -> None
 
+let extract_proof env evmap term =
+  let open Term in
+  let (vars,terms) = (ref [],ref []) in
+  let new_var term =
+    let env = {env with avoid = !vars@env.avoid} in
+    let (v,_) = new_name env in
+    vars := v::!vars; terms := term::!terms;
+    mkVar v
+  in
+  let rec f term =
+    let get_typ = Typing.e_type_of env.env evmap in
+    let ty_of_ty = get_typ (get_typ term) in
+    if is_Prop ty_of_ty then new_var term else
+    match kind_of_term term with
+    | Prod _ | Lambda _ -> term
+    | LetIn (n,b,t,c) -> mkLetIn (n,f b,t,c)
+    | Evar _ -> new_var term
+    | _ -> map_constr f term
+  in
+  let r = f term in
+  r, !vars, !terms
+
 (* TODO:適度な空行 *)
 let rec pr_term_body root leaf ?name ?typ env evmap rest term =
+  let open Term in
   let ty_of_ty = Typing.e_type_of env.env evmap (Typing.e_type_of env.env evmap term) in
-  if (Term.is_Set ty_of_ty || Term.is_Type ty_of_ty) && not (search_evar term) then
+  let rec check_evar b t = b || match kind_of_term t with
+    | LetIn (_,b,_,c) -> check_evar false b || search_evar c
+    | Prod _ | Lambda _ -> search_evar t
+    | _ -> fold_constr check_evar false t
+  in
+  if
+    not (isLetIn term) && not (isLambda term) && not (isProd term) &&
+    (is_Set ty_of_ty || is_Type ty_of_ty) && check_evar false term
+  then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
+    let (term,vars,terms) = extract_proof env evmap term in
+    let subs = List.rev (List.combine vars terms) in
     let ppterm = pr_constr env evmap term in
+    let f (n,t) = pr_term_body false leaf ~name:(Name n) {env with avoid = vars@env.avoid} evmap rest t in
+    prlist_with_sep fnl f subs ++ (if subs = [] then mt () else fnl ()) ++
     begin if root
       then str "thus thesis by" ++ spc () ++ ppterm ++ str "."
       else str "define " ++ Id.print n ++ str " as" ++ spc () ++ ppterm ++ str "." end
   else
-  let open Term in
   match kind_of_term term with
   | LetIn (n,b,t,c) ->
     let (Name hname,new_env) = push_rel n ~body:b t env in
@@ -208,8 +242,8 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
     let (args,br) = Term.decompose_lam c in
     let argdiff = List.length args - ind.mind_consnrealargs.(n) in
     let (args,br) = if argdiff <= 0 then (args,br) else
-        let (ex,args) = CList.chop argdiff args in
-        (args, Term.compose_lam ex br)
+      let (ex,args) = CList.chop argdiff args in
+      (args, Term.compose_lam ex br)
     in
     let (args,env) =
       List.fold_right (fun (x,t) (l,e) -> let (x,e) = push_rel x t e in x::l, e) args ([],env)
@@ -226,9 +260,9 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
     let args = List.rev args @ vs in
     let body = pr_term_body (argdiff >= 0) true env evmap rest br in
     let body = if argdiff >= 0 then body else
-      hv 2 (str "claim " ++ pr_type env evmap br ++ str "." ++ fnl () ++ body) ++ fnl () ++
-      str "end claim." ++ fnl () ++
-      str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
+        hv 2 (str "claim " ++ pr_type env evmap br ++ str "." ++ fnl () ++ body) ++ fnl () ++
+        str "end claim." ++ fnl () ++
+        str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
     in
     let pat =
       let ps = CList.make (cons_params_num env ci.ci_ind n) (Name (Id.of_string_soft "_")) in

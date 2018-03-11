@@ -193,7 +193,7 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
   let (_,ttyp) = Constrintern.interp_open_constr env.env !evmap typ_expr in
   let (_,ind) = Inductive.lookup_mind_specif env.env (fst (destInd ttyp)) in
   let arity = Context.Rel.length ind.mind_arity_ctxt in
-  if Array.length args <> 2 + arity + Array.length ind.mind_consnames then failwith "too many args" else
+  let (args,extra) = CArray.chop (2 + arity + Array.length ind.mind_consnames) args in
   let var = pr_constr env evmap (CArray.last args) in
   let brs = Array.sub args (1 + arity) (Array.length ind.mind_consnames) in
   let pr_branch i s b =
@@ -228,7 +228,10 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
     CArray.fold_left_i pr_branch (mt ()) brs ++ fnl () ++
     str "end induction."
   in
-  wrap_claim false root ?name typ body
+  if extra = [||] then wrap_claim false root ?name typ body else
+  wrap_claim false false (pr_type env evmap (mkApp (f,args))) body ++ fnl () ++
+  pr_instr root false ++ typ ++ spc () ++ str "by " ++
+  prvect_with_sep (fun _ -> str ", ") (pr_constr env evmap) extra ++ str "."
 
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let (_,ind) = Inductive.lookup_mind_specif env.env ci.ci_ind in

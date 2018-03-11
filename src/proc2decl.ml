@@ -162,7 +162,7 @@ and pr_app root leaf ?name ?typ env rest evmap diff =
     let (f,a) = destApp diff in
     let simpl = Reduction.whd_betaiota env.env diff in
     if not (eq_constr diff simpl) && not (search_evar f) then pr_term_body root leaf ?name ?typ env evmap rest simpl else
-    let args = (f :: Array.to_list a) in
+    let args = f :: arg_filter f a in
     let args_v = map (pr_value env evmap) args in
     let hyps = fold_left2 (fun a x y -> if Option.has_some y then a else x::a) [] args args_v in
     let hyps = rev hyps in
@@ -171,11 +171,6 @@ and pr_app root leaf ?name ?typ env rest evmap diff =
     let pr_branch a t n = a ++ pr_term_body false false ~name:(Name n) env evmap rest t ++ fnl () in
     let branches = fold_left2 pr_branch (mt ()) hyps names in
     let marge =
-      (* TODO:implicitnessをちゃんとする *)
-      let args_v = match hd (args_v) with
-        | Some x when String.get (string_of_ppcmds x) 0 <> '@' -> (Some (str "@" ++ x))::(tl args_v)
-        | _ -> args_v
-      in
       let f (s,i) = function Some x -> x::s,i | None -> Id.print (nth names i)::s, i+1 in
       rev (fst (fold_left f ([],0) args_v))
     in

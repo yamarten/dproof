@@ -185,7 +185,23 @@ let cons_params_num env ind cnum =
   let open Impargs in
   let open List in
   let (_,mi) = Inductive.lookup_mind_specif env.env ind in
-  (* implicits_of_globalがリストになるのが謎 *)
   let imp = positions_of_implicits (hd (implicits_of_global (Globnames.ConstructRef (ind,cnum+1)))) in
   let paramn = Context.Rel.length mi.mind_arity_ctxt in
   paramn - length (filter (fun x -> x <= paramn) imp)
+
+(* 部分適用で壊れない？ *)
+let arg_filter c a =
+  let open Impargs in
+  let l = Array.to_list a in try
+  (* print_constr に頼るの危なくない？ *)
+  if String.get (string_of_ppcmds (Termops.print_constr c)) 0 = '@' then l else
+  let glob = Globnames.global_of_constr c in
+  let imps = implicits_of_global glob in
+  (* なるべく暗黙の引数が少ないものを選ぶ *)
+  let (nums,imp) = CList.last (extract_impargs_data imps) in
+  let pos = positions_of_implicits (CList.last imps) in
+  let ret = CList.filteri (fun i _ -> not (List.mem (i+1) pos)) l in
+  let len = List.length ret in
+  (* 適用しきった結果が関数の可能性もあるので、上限の確認はしない *)
+  match nums with Some (n,_) when len < n -> l | _ -> ret
+  with _ -> l

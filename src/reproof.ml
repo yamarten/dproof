@@ -111,6 +111,6 @@ let start () =
   let out = match !file with None -> Feedback.msg_info ?loc:None | Some o -> (fun s -> output_string o (string_of_ppcmds s)) in
   begin
     if !term then out (Proc2decl.pr_term_all p1 p2) else
-      out (Proc2decl.pr_tree p1 (prftree (replay (get_tokens ()))) ++ fnl ())
+      out (Proc2decl.pr_tree p1 (prftree (replay (get_tokens ()))))
   end;
   Proof_global.unfreeze p; States.unfreeze s

@@ -361,8 +361,9 @@ let header_and_footer p body =
     | [] -> mt ()
     | _ -> str "let " ++ prlist_with_sep (fun _ -> str "," ++ spc ()) (fun x -> x) params ++ str "." ++ fnl ()
   in
-  fnl () ++ str "Goal " ++ hyps ++ concl ++ str "." ++ fnl () ++
-  hv 2 (str "proof." ++ fnl () ++ lets ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++ str "Qed." ++ fnl ()
+  str "Goal " ++ hyps ++ concl ++ str "." ++ fnl () ++
+  hv 2 (str "proof." ++ fnl () ++ lets ++ body) ++ fnl () ++ str "end proof." ++ fnl () ++
+  str "Qed." ++ fnl () ++ fnl ()
 
 let pr_tree p t = header_and_footer p (pr_tree true true (init_env p) t)
 

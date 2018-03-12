@@ -132,8 +132,9 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   | LetIn (n,b,t,c) ->
     let (Name hname,new_env) = push_rel n ~body:b t env in
     let def = pr_term_body false true ~name:(Name hname) ~typ:t {env with avoid=hname::env.avoid} evmap rest b in
-    let body = pr_term_body root leaf ?name ?typ new_env evmap rest c in
-    def ++ fnl () ++ body
+    let body root name = def ++ fnl () ++ pr_term_body root leaf ?name ?typ new_env evmap rest c in
+    let typ = pr_type ?typ env evmap term in
+    wrap_claim root leaf ?name typ body
   | Lambda _ -> pr_lambda root leaf ?name ?typ env evmap rest term
   | Evar _ -> begin try
         let f = List.assoc (fst (destEvar term)) rest in

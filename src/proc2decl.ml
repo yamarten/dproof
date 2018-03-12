@@ -37,7 +37,7 @@ let pr_instr root leaf =
   | false, false -> str "then "
 
 let pr_simple root leaf ?name env tac vars typ =
-  hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just tac vars env ++ str ".")
+  hv 2 (pr_instr root leaf ++ pr_name_opt name ++ (if root then str "thesis" else typ) ++ pr_just tac vars env ++ str ".")
 
 let wrap_claim root leaf ?name typ body =
   if leaf && not (Option.has_some name) then body root name else

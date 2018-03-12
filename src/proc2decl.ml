@@ -91,6 +91,19 @@ let extract_proof env evmap term =
   let r = f term in
   r, !vars, !terms
 
+let pr_pat env ind cnum args =
+  let open Impargs in
+  let open CList in
+  let (_,mi) = Inductive.lookup_mind_specif env.env ind in
+  let params = fst (Term.decompose_prod (mi.mind_nf_lc.(cnum))) in
+  let imp = positions_of_implicits (hd (implicits_of_global (Globnames.ConstructRef (ind,cnum+1)))) in
+  let paramn = length params - length args in
+  let cons = Name mi.mind_consnames.(cnum) in
+  let args = addn paramn (Name (Id.of_string_soft "_")) args in
+  let args = filteri (fun i _ -> not (mem (i+1) imp)) args in
+  if args = [] then pr_name cons else
+  str "(" ++ prlist_with_sep (fun _ -> str " ") pr_name (cons :: args) ++ str ")"
+
 (* TODO:適度な空行 *)
 let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   let open Term in
@@ -211,12 +224,7 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
       let h = str " and " ++ pr_name n ++ str ":" ++ pr_constr e evmap t in
       newn::l, newe, h
     in
-    let pat =
-      let ps = CList.make (cons_params_num env (fst (destInd ttyp)) i) (Name (Id.of_string_soft "_")) in
-      let cons = Name ind.mind_consnames.(i) in
-      if args = [] then pr_name cons else
-        str "(" ++ prlist_with_sep (fun _ -> str " ") pr_name (cons :: ps @ List.rev args) ++ str ")"
-    in
+    let pat = pr_pat env (fst (destInd ttyp)) i (List.rev args) in
     let (_,newe,hyps) = List.fold_left f ([],newe,mt ()) (List.rev hyps) in
     s ++ fnl () ++
     hv 2 (str "suppose it is " ++ pat ++ hyps ++ str "." ++ fnl () ++
@@ -236,7 +244,6 @@ and pr_ind root leaf ?name ?typ env rest evmap diff =
 and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
   let (_,ind) = Inductive.lookup_mind_specif env.env ci.ci_ind in
   let pr_br n c =
-    let cons = Name ind.mind_consnames.(n) in
     let (args,br) = Term.decompose_lam c in
     let argdiff = List.length args - ind.mind_consnrealargs.(n) in
     let (args,br) = if argdiff <= 0 then (args,br) else
@@ -262,11 +269,7 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
         str "end claim." ++ fnl () ++
         str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
     in
-    let pat =
-      let ps = CList.make (cons_params_num env ci.ci_ind n) (Name (Id.of_string_soft "_")) in
-      if args = [] then pr_name cons else
-        str "(" ++ prlist_with_sep (fun _ -> str " ") pr_name (cons :: ps @ args) ++ str ")"
-    in
+    let pat = pr_pat env ci.ci_ind n args in
     hv 2 (str "suppose it is " ++ pat ++ str "." ++ fnl () ++ body) ++ fnl ()
   in
   let body _ _ =

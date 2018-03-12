@@ -314,24 +314,30 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   let (vars,envs) = find_vars env e diff in
-  let pr_br (s,a,l) (evar,b) =
+  let f l (evar,step) =
+    let term = match step with Proof ((_,d,(_,em)),_,_) -> Some (d,em) | _ -> None in
+    let env = let e = List.assoc evar envs in {e with avoid = l@e.avoid} in
+    let (n,_) = new_name ?term env in
+    n::l
+  in
+  (* next_varが存在する場合、名前の番号が飛んでしまう可能性がある *)
+  let names = List.rev (List.fold_left f [] l) in
+  let pr_br i (evar,b) =
+    let env = let e = List.assoc evar envs in {e with avoid = names@e.avoid} in
+    let name = Name (List.nth names i) in
     match b with
     | Proof ((_,d,(_,em)),_,_) ->
-      let env = let e = List.assoc evar envs in {e with avoid = a@e.avoid} in
-      let (name,newe) = new_name ~term:(d,em) env in
-      let next_var = pr_value newe em d in
-      if Option.has_some next_var then s,a,(Option.get next_var)::l else
-      let body = s ++ pr_tree false false ~name:(Name name) newe b ++ fnl () in
-      body,name::a,(Id.print name)::l
-    | _ ->
-      let (name,newe) = new_name {env with avoid = a@env.avoid} in
-      pr_tree root leaf ~name:(Name name) env b,name::a,l
+      let next_var = pr_value env em d in
+      if Option.has_some next_var then mt (), Option.get next_var else
+      pr_tree false false ~name env b ++ fnl (), pr_name name
+    | Warn _ ->  pr_tree root leaf ~name env b ++ fnl (), pr_name name
   in
-  let (branches,_,vs) = List.fold_left pr_br (mt (), [], []) l in
+  let (branches,vs) = List.split (CList.mapi pr_br l) in
   let vars = vars @ (List.rev vs) in
   let typ = pr_constr env e (concl env g !e) in
   let body root name =
-    branches ++ hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
+    prlist (fun x -> x) branches ++
+    hv 2 (pr_instr root leaf ++ pr_name_opt name ++ typ ++ pr_just v vars env ++ str ".")
   in
   wrap_claim root leaf ?name typ body
 

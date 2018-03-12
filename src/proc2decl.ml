@@ -111,11 +111,12 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   let rec check_evar b t = b || match kind_of_term t with
     | LetIn (_,b,_,c) -> check_evar false b || search_evar c
     | Prod _ | Lambda _ -> search_evar t
+    | Evar _ -> true
     | _ -> fold_constr check_evar false t
   in
   if
     not (isLetIn term) && not (isLambda term) && not (isProd term) &&
-    (is_Set ty_of_ty || is_Type ty_of_ty) && check_evar false term
+    (is_Set ty_of_ty || is_Type ty_of_ty) && not (check_evar false term)
   then
     let (n,env) = match name with Some (Name n) -> (n,env) | _ -> new_name env in
     let (term,vars,terms) = extract_proof env evmap term in

@@ -1,3 +1,5 @@
+(* 型定義とconstr絡みの便利関数等 *)
+
 open Names
 open Pp
 
@@ -5,14 +7,19 @@ module RelDec = Context.Rel.Declaration
 module NamedDec = Context.Named.Declaration
 
 (* flags *)
-let term = ref false
-let file = ref (None : out_channel option)
+let term = ref false (* タクティックを使わない変換を行う *)
+let file = ref (None : out_channel option) (* ファイルに書き出す None:stdout *)
 
 (* types *)
-type env = {env:Environ.env; rename:(Id.t*Id.t) list; avoid:Id.t list}
+type env = {
+  env:Environ.env;
+  rename:(Id.t*Id.t) list; (* シャドウイング回避のために改名したもの *)
+  avoid:Id.t list (* こっちで生成した仮定名なども含め、既に使っている名前全て *)
+}
 type prfstep = Vernacexpr.vernac_expr * Constr.t * (Goal.goal list * Evd.evar_map ref)
+(* ゴール木 *)
 type prftree =
-  | Proof of prfstep * (Constr.existential_key * prftree) list * bool
+  | Proof of prfstep * (Constr.existential_key * prftree) list * bool (* boolは仮定（環境）変化の有無 *)
   | Warn of std_ppcmds * (Constr.existential_key * prftree) list
 
 let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *)"
@@ -20,6 +27,7 @@ let warn s v = str "(* " ++ str s ++ str ": " ++ Ppvernac.pr_vernac v ++ str " *
 let pr_constr env evmap c =
   Ppconstr.default_term_pr.pr_constr_expr (Constrextern.extern_constr false env.env !evmap c)
 
+(* pr_constrのtypes版ではないことに注意（typesを出力したいだけならpr_constrでよい） *)
 let pr_type ?typ env evmap c = match typ with
   | None ->
     let t = Typing.e_type_of env.env evmap c in
@@ -41,7 +49,10 @@ let named_to_rel = function
   | NamedDec.LocalAssum (n,c) -> RelDec.LocalAssum (Name n,c)
   | NamedDec.LocalDef (n,c,t) -> RelDec.LocalDef (Name n,c,t)
 
+(* env.avoidを避けつつ、なるべくtermの型名を使いながら名前生成 *)
+(* nameと言いつつId.tを返す点に注意 *)
 let new_name ?term env =
+  (* 項から適当に名前を取ってくる *)
   let rec f env em t = match Constr.kind t with
     | Ind _ | Const _ | Var _ | Rel _ -> string_of_ppcmds (pr_constr env em t)
     | App (c,_) -> f env em c
@@ -52,6 +63,7 @@ let new_name ?term env =
     | Some (t,evmap) ->
       let tname = f env evmap (Typing.e_type_of env.env evmap t) in
       let tname = Str.global_replace (Str.regexp "[^0-9a-zA-Z]") "" tname in
+      (* TODO: 3文字で切ってしまうのは流石にどうなんだろう *)
       let tname = if String.length tname > 3 then String.sub tname 0 2 else tname in
       Id.of_string (Id.to_string Namegen.default_prop_ident ^ tname)
     | None -> Namegen.default_prop_ident
@@ -59,8 +71,8 @@ let new_name ?term env =
   let name = Namegen.next_ident_away_in_goal base env.avoid in
   name, {env with avoid = name::env.avoid}
 
+(* envにname:typ=bodyを追加 *)
 let push_rel name ?body typ env =
-  (* TODO: typがenv中に存在するときの処理 *)
   let push id =
     let open RelDec in
     match body with
@@ -78,6 +90,7 @@ let push_rel name ?body typ env =
     let newa = newid::env.avoid in
     Name newid, {env = newe; rename = newmap; avoid = newa;}
 
+(* t中のevarの有無を確認する *)
 let rec search_evar t =
   let open Constr in
   match kind t with
@@ -85,6 +98,15 @@ let rec search_evar t =
   | Rel _ | Var _ | Meta _ | Sort _ | Const _ | Ind _ | Construct _ -> false
   | _ -> fold (fun b t -> b || search_evar t) false t
 
+(* t中からgに対応するevarを見つけて持ってくる *)
+let rec find_evar g t =
+  let open Constr in
+  match kind t with
+  | Evar (e,_) when e = g -> Some t
+  | Rel _ | Var _ | Meta _ | Sort _ | Const _ | Ind _ | Construct _ | Evar _ -> None
+  | _ -> fold (fun b t -> if Option.has_some b then b else find_evar g t) None t
+
+(* gの帰結を取得し、含まれる名前をenvに従って書き換える *)
 let concl env g e =
   let open Term in
   let a = ref env.avoid in
@@ -102,6 +124,8 @@ let concl env g e =
   in
   f (Goal.V82.concl e (List.hd g))
 
+(* 2つの証明項の差分をペアのリストとして返す *)
+(* タクティック実行前後を想定しているため、t1のevarがt2で別のものになっている場合以外は例外を吐く *)
 let rec diff_term t1 t2 =
   let open Term in
   let f_array l1 l2 = List.concat @@ Array.to_list @@ CArray.map2 diff_term l1 l2 in
@@ -122,13 +146,8 @@ let rec diff_term t1 t2 =
   | CoFix (_,(ns,tl1,bl1)), Fix (_,(_,tl2,bl2)) -> f_array tl1 tl2 @ f_array bl1 bl2
   | _ -> failwith "proof term changed"
 
-let rec find_evar g t =
-  let open Constr in
-  match kind t with
-  | Evar (e,_) when e = g -> Some t
-  | Rel _ | Var _ | Meta _ | Sort _ | Const _ | Ind _ | Construct _ | Evar _ -> None
-  | _ -> fold (fun b t -> if Option.has_some b then b else find_evar g t) None t
-
+(* 2つの証明状態に対してdiff_termする *)
+(* 変化が2箇所以上ある（複数のゴールが操作された）場合、未対応なので例外を吐く *)
 let diff_proof e p1 p2 =
   let diffs = List.concat @@ CList.map2 diff_term (Proof.partial_proof p1) (Proof.partial_proof p2) in
   if List.length diffs = 0 then
@@ -139,7 +158,7 @@ let diff_proof e p1 p2 =
   else
     List.hd diffs
 
-(* 新変数名は以降で使われないことを仮定 *)
+(* c中の自由変数と各evarでの環境をリストにして返す *)
 let find_vars env evmap c =
   let rec collect i env vars c =
     let open Term in
@@ -170,10 +189,10 @@ let find_vars env evmap c =
   let (vars,envs) = collect 0 env [] c in
   (List.rev (CList.uniquize vars), envs)
 
-(* TODO:ローカル環境を持ってくる *)
 let init_env p =
   let (g,_,_,_,e) = Proof.proof p in
   let env82 = Goal.V82.env e (List.hd g) in
+  (* env82はローカル変数もNamedとして持っているため、Relに移す *)
   let f _ d (l,e) =
     let n = NamedDec.get_id d in
     let t = NamedDec.get_type d in
@@ -182,7 +201,8 @@ let init_env p =
   let (l,env) = Environ.fold_named_context f env82 ~init:([],env82) in
   {env = env; rename = []; avoid = l}
 
-(* 部分適用で壊れない？ *)
+(* コンストラクタcの引数配列を受け取り、暗黙の引数を除いたリストを返す *)
+(* 部分適用した場合に壊れるかもしれない *)
 let arg_filter c a =
   let open Impargs in
   let l = Array.to_list a in try
@@ -190,7 +210,7 @@ let arg_filter c a =
   if String.get (string_of_ppcmds (Termops.print_constr c)) 0 = '@' then l else
   let glob = Globnames.global_of_constr c in
   let imps = implicits_of_global glob in
-  (* なるべく暗黙の引数が少ないものを選ぶ *)
+  (* 怒られることを避けるため、なるべく暗黙の引数が少ないものを選ぶ *)
   let (nums,imp) = CList.last (extract_impargs_data imps) in
   let pos = positions_of_implicits (CList.last imps) in
   let ret = CList.filteri (fun i _ -> not (List.mem (i+1) pos)) l in

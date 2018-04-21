@@ -1,5 +1,9 @@
+(* タクティックの記録とゴール木の生成 *)
+
 open Pp
 open Dutil
+
+(* ここからtoplevel/Coqloopのコピペ *)
 
 let resize_buffer ibuf = let open Bytes in
   let nstr = create (2 * length ibuf.Coqloop.str + 1) in
@@ -23,8 +27,14 @@ let prompt_char ic ibuf count = Coqloop.(
     Some c
   with End_of_file -> None)
 
+(* ここまでコピペ *)
+
+(* コマンド履歴 *)
 let vernaclog = ref []
+
 let reset () = vernaclog := []
+
+(* Coq内部からはコマンド履歴が得られないため、入力に記録用の関数を噛ませる *)
 let rec_stream () =
   let rec next i =
     try let e = Stream.next (Stream.from (prompt_char stdin Coqloop.top_buffer)) in
@@ -32,7 +42,9 @@ let rec_stream () =
     with Stream.Failure -> None in
   Stream.from next
 
+(* 証明再現中のCoqの状態の一時退避用 *)
 let (save,load) =
+  (* Stm.backupでも良いかもしれない *)
   let p = ref (Proof_global.freeze `No) in
   let s = ref (States.freeze `Yes) in
   let save () = p := Proof_global.freeze `No; s := States.freeze `Yes in
@@ -60,6 +72,7 @@ let replay tokens =
   in
   List.rev (List.fold_left List.append [] (f []))
 
+(* サブプルーフのネストレベル *)
 let reset_level, is_bullet =
   let n = ref 0 in
   (fun () -> n := 0),
@@ -71,8 +84,12 @@ let reset_level, is_bullet =
   | VernacUnfocus | VernacEndSubproof when !n > 0 -> n := !n-1; true
   | _ -> false
 
+(* ゴール木への変換 *)
+(* 論文ではより複雑な証明の変換への対応に備えて2段階に分けていたが、実装は一気に変換している *)
 let prftree stream =
   let s = Stream.of_list stream in
+  (* コマンド実行前の（先頭を除く）ゴールが実行後にそのまま残っていることを確認 *)
+  (* 実行前が空の場合のみバレットを抜けた可能性があるので特別扱い *)
   let rec sublist = function
     | _,[],_ -> true
     | 0,l1,_::l2 | -1,l1,l2 -> l1 = l2
@@ -83,6 +100,7 @@ let prftree stream =
   let rec f () =
     if Stream.peek s = None then [] else
     let (p1,v,p2) = Stream.next s in
+    (* focus/unfocusによってゴールリストが変化していた場合は見なかったことにする *)
     if is_bullet v then f () else
     let (g1,b1,_,_,e1) = Proof.proof p1 in
     let (g2,b2,_,_,e2) = Proof.proof p2 in
@@ -94,6 +112,7 @@ let prftree stream =
       let step = (v, diff, (g1,ref e2)) in
       let eq_env e = try Environ.eq_named_context_val (Goal.V82.hyps e1 (List.hd g1)) (Goal.V82.hyps e2 e) with _ -> false in
       if sublist (n2-n1,List.tl g1,g2) then
+        (* 増えたゴールの数だけ子供を作る *)
         let rec fork n = if n>=0 then f () @ fork (n-1) else [] in
         let l = List.rev (fork (n2-n1)) in
         let eq = List.fold_left (fun b e -> eq_env e && b) true (CList.firstn (List.length l) g2) in

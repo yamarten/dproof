@@ -7,12 +7,12 @@ let replace_name pat str target =
   let pat = string_of_ppcmds pat in
   let str = string_of_ppcmds str in
   let target = string_of_ppcmds target in
-  let code = "\\(^\\|[\n-&(-/:-@[-^`{-~]\\|^\\|$\\)" in
+  let delim = "\\(^\\|[\n-&(-/:-@[-^`{-~]\\|^\\|$\\)" in
   let pat = global_replace (regexp "^(\\(.*\\))$") "\\1" pat in
   let pat = global_replace (regexp "\\([][$^.*+?\\\\]\\)") "\\\\\\1" pat in
-  let pat = code ^ "\\(" ^ global_replace (regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ code in
-  let str = ("\\1"^str^"\\3") in
-  let reg = (regexp pat) in
+  let pat = delim ^ "\\(" ^ global_replace (regexp " \\|\n") "[ \\|\n]" pat ^ "\\)" ^ delim in
+  let str = "\\1"^str^"\\3" in
+  let reg = regexp pat in
   let rec repall s =
     try ignore (search_forward reg s 0); repall (global_replace reg str s)
     with Not_found -> Pp.str s
@@ -49,16 +49,16 @@ let pr_value env evmap term =
   let ty = Typing.e_type_of env.env evmap term in
   let ty_of_ty = Typing.e_type_of env.env evmap ty in
   let prop = Term.is_Prop ty_of_ty in
-  let x = ref None in
+  let ret = ref None in
   let open Constr in
   let pick _ r n =
     let t = Vars.lift n (RelDec.get_type r) in
     if equal ty t then
-      x := Some (RelDec.get_name r);
+      ret := Some (RelDec.get_name r);
     n-1
   in
   if prop then ignore (Environ.fold_rel_context pick env.env ~init:(Environ.nb_rel env.env));
-  if Option.has_some !x then Some (pr_name (Option.get !x)) else
+  if Option.has_some !ret then Some (pr_name (Option.get !ret)) else
   let open Constr in
   match kind term with
   | Rel _ | Var _ | Const _ | Construct _ | Ind _ | Sort _ -> Some (pr_constr env evmap term)
@@ -145,11 +145,11 @@ let rec pr_term_body root leaf ?name ?typ env evmap rest term =
   | Case (ci,t,c,bs) -> pr_case root leaf ?name env evmap rest (ci,t,c,bs)
   | Rel _ | Var _ | Const _ | Construct _ ->
     if not root && name = None then mt () else
-    let i = match name with
+    let instr = match name with
       | None -> str "thus"
-      | Some n -> str "have " ++ pr_name_opt name
+      | Some n -> str "have " ++ pr_name n ++ str ":"
     in
-    i ++ str " " ++ pr_type ?typ env evmap term ++ str " by " ++ pr_constr env evmap term ++ str "."
+    instr ++ str " " ++ pr_type ?typ env evmap term ++ str " by " ++ pr_constr env evmap term ++ str "."
   | Prod _ | Sort _ | Meta _ | Fix _ | CoFix _ | Proj _ | Ind _ -> str "(* not supported *)"
 
 and pr_lambda root leaf ?name ?typ env evmap rest term =
@@ -267,9 +267,9 @@ and pr_case root leaf ?name env evmap rest (ci,t,c,bs) =
     let args = List.rev args @ vs in
     let body = pr_term_body (argdiff >= 0) true env evmap rest br in
     let body = if argdiff >= 0 then body else
-        hv 2 (str "claim " ++ pr_type env evmap br ++ str "." ++ fnl () ++ body) ++ fnl () ++
-        str "end claim." ++ fnl () ++
-        str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
+      hv 2 (str "claim " ++ pr_type env evmap br ++ str "." ++ fnl () ++ body) ++ fnl () ++
+      str "end claim." ++ fnl () ++
+      str "hence thesis by " ++ prlist_with_sep pr_comma pr_name vs ++ str "."
     in
     let pat = pr_pat env ci.ci_ind n args in
     hv 2 (str "suppose it is " ++ pat ++ str "." ++ fnl () ++ body) ++ fnl ()
@@ -316,14 +316,14 @@ and pr_path root leaf ?name env (v,diff,(g,e)) next =
 
 and pr_branch root leaf ?name env (v,diff,(g,e)) l =
   let (vars,envs) = find_vars env e diff in
-  let f l (evar,step) =
+  let naming l (evar,step) =
     let term = match step with Proof ((_,d,(_,em)),_,_) -> Some (d,em) | _ -> None in
     let env = let e = List.assoc evar envs in {e with avoid = l@e.avoid} in
     let (n,_) = new_name ?term env in
     n::l
   in
   (* next_varが存在する場合、名前の番号が飛んでしまう可能性がある *)
-  let names = List.rev (List.fold_left f [] l) in
+  let names = List.rev (List.fold_left naming [] l) in
   let pr_br i (evar,b) =
     let env = let e = List.assoc evar envs in {e with avoid = names@e.avoid} in
     let name = Name (List.nth names i) in
